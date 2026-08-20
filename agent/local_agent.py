@@ -489,8 +489,17 @@ def auto_inject_prompt(prompt_data: dict, params: dict) -> None:
     if negative:
         target = neg_node
         if target is None and len(text_nodes) > 1:
-            # 没识别出负框：第二个文本节点兜底（常见 正/负 双框布局）
-            target = text_nodes[1][:3]
+            # 负框兜底：取「未被选为正框」的节点，且绝不覆盖正框——
+            # 盲目取 text_nodes[1] 在字典顺序下可能把负面词注入正面框（正/负错乱、图上出乱码文字）。
+            # 优先级：内容像负面词的 > 不是正框的其他节点 > 保守不注入。
+            if pos_node is not None:
+                for nid, node, key, text in text_nodes:
+                    if (nid, node, key) != (pos_node[0], pos_node[1], pos_node[2]):
+                        target = (nid, node, key)
+                        break
+            if target is None:
+                # 只有一个文本节点且它已被当正框：不注入负面词（避免覆盖正面提示词）
+                logger.warning("[remote_link] 仅识别到单一提示词框（已被当作正面），跳过负面词注入，避免覆盖正面提示词")
         if target is not None:
             target[1]["inputs"][target[2]] = negative
             logger.info(f"[remote_link] 自动注入负提示词 → 节点 {target[0]}（{target[1].get('class_type')}）")
