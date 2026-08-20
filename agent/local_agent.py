@@ -147,8 +147,12 @@ def normalize_combo_value(value, spec) -> object:
     return value
 
 
-def convert_ui_to_api(workflow: dict, object_info: dict) -> dict:
+def convert_ui_to_api(workflow: dict, object_info: dict) -> tuple[dict, dict]:
     """把 UI 格式工作流转换为 API 格式（等价于 ComfyUI 前端提交时的转换逻辑）。
+
+    返回 (prompt, role_hints)：
+      - prompt：API 格式工作流；
+      - role_hints：节点 title 标签 → 角色（正面/负面提示词框），供 auto_inject_prompt 使用。
 
     原理：
       - 节点类型 → class_type；
@@ -361,10 +365,7 @@ def convert_ui_to_api(workflow: dict, object_info: dict) -> dict:
                     ):
                         wi += 1
         prompt[str(nid)] = {"class_type": ntype, "inputs": node_inputs}
-    # 附加 title 角色标签（内部约定 key，注入时读取并清理，不提交给 ComfyUI）
-    if role_hints:
-        prompt[ROLE_HINTS_KEY] = role_hints
-    return prompt
+    return prompt, role_hints
 
 
 TOKEN_RE = re.compile(r"^__[A-Z0-9_]+__$")
@@ -457,12 +458,13 @@ NEG_TITLE_RE = re.compile(r"负面|负向|negative", re.I)
 ROLE_HINTS_KEY = "__YUNXIN_ROLE_HINTS__"
 
 
-def auto_inject_prompt(prompt_data: dict, params: dict) -> None:
+def auto_inject_prompt(prompt_data: dict, params: dict, role_hints: dict | None = None) -> None:
     """无 __PROMPT__/__NEGATIVE__ 占位符的工作流：自动识别正/负提示词框并填入。
 
     识别优先级（自上而下）：
-      1. 【用户标签】转换器收集的节点 title 标签（节点 Title 含「正面/positive」或
-         「负面/negative」）—— 最可靠，不同用户工作流节点 ID 各异也 100% 准确；
+      1. 【用户标签】节点 title 标签（Title 含「正面/positive」或「负面/negative」，
+         由 convert_ui_to_api 收集、执行链传入）—— 最可靠，不同用户工作流节点
+         ID 各异也 100% 准确；
       2. 【内容启发式】负框 = 内容像负面词（worst quality/bad anatomy/…）的候选；
          正框 = 其余候选中第一个（优先内容像正面词）；
       3. 【兜底】没认出负框时，取「未被选为正框」的其他文本节点；单节点时保守跳过
@@ -473,8 +475,8 @@ def auto_inject_prompt(prompt_data: dict, params: dict) -> None:
     if not positive and not negative:
         return
 
-    # 1) 用户 title 标签优先（转换器收集，存于内部约定 key；读取后清理）
-    hints = prompt_data.pop(ROLE_HINTS_KEY, None) or {}
+    # 1) 用户 title 标签优先（由执行链传入，不在 prompt_data 里）
+    hints = role_hints or {}
     if hints:
         neg_hint = pos_hint = None
         for nid, role in hints.items():
@@ -1188,7 +1190,7 @@ class LocalAgent:
                         object_info = await self._get_object_info(
                             aiohttp.ClientTimeout(total=30)
                         )
-                    api_wf = convert_ui_to_api(obj, object_info)
+                    api_wf, _ = convert_ui_to_api(obj, object_info)
                 elif fmt == "api":
                     api_wf = obj
                 else:
@@ -1446,12 +1448,13 @@ class LocalAgent:
         run_timeout = int(payload.get("timeout") or self.cfg["comfyui"].get("timeout", 600))
 
         # 1. 加载工作流
+        role_hints: dict = {}
         if wf_ref:
             obj = json.loads(self._read_workflow(wf_ref))
             fmt = detect_workflow_format(obj)
             if fmt == "ui":
                 object_info = await self._get_object_info(timeout)
-                prompt = convert_ui_to_api(obj, object_info)
+                prompt, role_hints = convert_ui_to_api(obj, object_info)
             elif fmt == "api":
                 prompt = obj
             else:
@@ -1460,6 +1463,9 @@ class LocalAgent:
             prompt = json.loads(self._default_workflow())
 
         # 2. 占位符替换：模板中 `"__TOKEN__"`（含引号）→ 参数的 JSON 编码
+        # 内部约定 key（ROLE_HINTS_KEY，含 __ 包裹）会被缺失参数正则误匹配，
+        # 且本就不该进工作流——在序列化前取出，注入时再喂回 auto_inject_prompt
+        role_hints = prompt.pop(ROLE_HINTS_KEY, None) or {}
         wf_str = json.dumps(prompt, ensure_ascii=False)
         for key, value in params.items():
             if key == "texts":  # 文本入口槽位（Simple String），不走占位符替换
@@ -1482,8 +1488,6 @@ class LocalAgent:
                     "请在插件预设的 params 里为这些 token 定义参数"
                 )
         prompt_data = json.loads(wf_str)
-        # 兜底清理：内部约定 key 绝不允许提交给 ComfyUI（即使未触发注入）
-        prompt_data.pop(ROLE_HINTS_KEY, None)
 
         # 2.5 约定入口节点注入（图片 base64 / 上传文件 / 文本 / 视频）+ 负种子随机化
         merged_inject = dict(inject)
@@ -1492,7 +1496,7 @@ class LocalAgent:
         await self.apply_injects(prompt_data, merged_inject, timeout)
         prompt_data = randomize_negative_seeds(prompt_data)
         # 2.6 无占位符工作流的自动提示词注入（识别正/负提示词框填入，占位符已在上面替换过则无副作用）
-        auto_inject_prompt(prompt_data, params)
+        auto_inject_prompt(prompt_data, params, role_hints)
         # 2.7 filename_prefix 的 %date:格式% 替换（与 ComfyUI 前端提交时行为一致）
         substitute_prefix_dates(prompt_data)
 
