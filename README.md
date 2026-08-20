@@ -478,6 +478,14 @@ flowchart TD
 > [!TIP]
 > **想 100% 准确？给节点打标签**：在 ComfyUI 里右键提示词节点 → Title 改成 `正面提示词` / `负面提示词`（或含 `positive` / `negative`），保存工作流即可。
 > 插件会**优先按标签注入**，不再依赖内容猜测——不同工作流、不同节点 ID、甚至空提示词框都能准确对应。没打标签的工作流完全不受影响，仍走自动识别。
+>
+> **📌 一键自动打标（群友福利）**：项目自带 `tools/tag_workflows.py`，在你电脑上跑一次，自动给 ComfyUI 里**所有工作流**的提示词节点打上标签：
+> ```bash
+> python tools/tag_workflows.py                     # 自动探测 ComfyUI user 目录
+> python tools/tag_workflows.py --dir D:/ComfyUI/user   # 或手动指定
+> python tools/tag_workflows.py --dry-run           # 先预览，不修改
+> ```
+> 自动按内容区分正/负框，识别不了的会列出来让你手动确认；打标前自动备份（`*.bak_tag`）。
 
 **② 占位符（精确控制）**
 
