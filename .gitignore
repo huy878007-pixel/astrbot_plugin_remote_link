@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 构建产物
+build/
+dist/
+*.spec
+
+# 运行期数据（媒体缓存、配置、日志）
+data/
+agent/agent_config.json
+agent_config.json
+*.log
+
+# 发布目录（zip 产物）
+release/
+
+# 第三方素材（非本项目内容，不随仓库分发）
+preview/ui-skills/
+
+# 临时预览
+preview_readme.html
+
+# IDE
+.vscode/
+.idea/
+
+# 系统
+Thumbs.db
+.DS_Store
+desktop.ini

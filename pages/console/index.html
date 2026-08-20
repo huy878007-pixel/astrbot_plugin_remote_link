@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>云信互联 · 控制台</title>
+<link rel="stylesheet" href="./style.css">
+<link rel="stylesheet" href="./assets/litegraph.css">
+</head>
+<body>
+<!-- 霓虹示波器 × 复古未来 背景层 -->
+<div class="bg-layer">
+  <div class="bg-space"></div>
+  <svg class="bg-wave" viewBox="0 0 1200 90" preserveAspectRatio="none"><path d="M0 45 Q15 10 30 45 T60 45 T90 45 T120 45 T150 45 T180 45 T210 45 T240 45 T270 45 T300 45 T330 45 T360 45 T390 45 T420 45 T450 45 T480 45 T510 45 T540 45 T570 45 T600 45 T630 45 T660 45 T690 45 T720 45 T750 45 T780 45 T810 45 T840 45 T870 45 T900 45 T930 45 T960 45 T990 45 T1020 45 T1050 45 T1080 45 T1110 45 T1140 45 T1170 45 T1200 45"/></svg>
+  <div class="bg-stars"></div><div class="bg-grid"></div><div class="bg-floor"></div><div class="bg-scan"></div><div class="bg-glitch"></div>
+</div>
+<div class="shell">
+
+  <!-- ============ 侧边栏 ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <img class="brand-logo" src="./assets/logo.png" alt="云信互联">
+      <div class="brand-name">云信互联</div>
+      <div class="brand-sub">Yunxin Console</div>
+    </div>
+    <nav class="nav" id="nav">
+      <button class="nav-item active" data-tab="overview"><span class="nav-ico">📡</span><span>概览</span></button>
+      <button class="nav-item" data-tab="gallery"><span class="nav-ico">🖼️</span><span>产物库</span></button>
+      <button class="nav-item" data-tab="queue"><span class="nav-ico">📋</span><span>任务队列</span></button>
+      <button class="nav-item" data-tab="workflows"><span class="nav-ico">📊</span><span>工作流</span></button>
+      <button class="nav-item" data-tab="enhance"><span class="nav-ico">🧠</span><span>增强对话</span></button>
+      <button class="nav-item" data-tab="settings"><span class="nav-ico">⚙️</span><span>设置</span></button>
+    </nav>
+    <div class="sidebar-foot">
+      <span id="mode-badge" class="badge info">预览模式</span>
+      <span id="version-badge" class="badge"></span>
+      <button id="btn-back" class="btn back" title="返回 AstrBot 主面板">← 返回主面板</button>
+    </div>
+  </aside>
+
+  <!-- ============ 内容区 ============ -->
+  <main class="content">
+    <header class="topbar">
+      <div class="topbar-title" id="page-title">概览</div>
+      <div class="spacer"></div>
+      <div id="tab-actions"></div>
+    </header>
+
+    <!-- ============ 概览 ============ -->
+    <section id="tab-overview" class="pane">
+      <div class="cards">
+        <div class="card">
+          <h3>隧道连接</h3>
+          <div class="value" id="conn-value"><span class="dot bad"></span>未连接</div>
+          <div class="meta" id="conn-meta">—</div>
+        </div>
+        <div class="card">
+          <h3>本地主机</h3>
+          <div class="value" id="host-value">—</div>
+          <div class="meta" id="host-meta">—</div>
+        </div>
+        <div class="card">
+          <h3>GPU 显存</h3>
+          <div class="value" id="gpu-value">—</div>
+          <div class="meta" id="gpu-meta">—</div>
+        </div>
+        <div class="card">
+          <h3>本地 LLM</h3>
+          <div class="value" id="llm-value">—</div>
+          <div class="meta" id="llm-meta">—</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">⚡ 提交生成任务 <span class="dim" style="font-weight:normal">（与 QQ 群同一套内生调度；选类型=明确指令，不靠大模型猜）</span></div>
+        <div class="panel-body row" style="gap:8px;flex-wrap:wrap">
+          <div class="row" style="gap:6px;flex-wrap:wrap" id="task-kind-btns">
+            <button class="kbtn active" data-kind="">🧠 智能</button>
+            <button class="kbtn" data-kind="图片">🖼️ 图片</button>
+            <button class="kbtn" data-kind="视频">🎬 视频</button>
+            <button class="kbtn" data-kind="音频">🎵 音频</button>
+          </div>
+        </div>
+        <div class="panel-body row" style="gap:8px;flex-wrap:wrap">
+          <input id="task-intent" type="text" placeholder="例：生成一张赛博朋克风格的猫，戴墨镜（选了类型则自动带上）" style="flex:1;min-width:260px;padding:8px 10px;border-radius:6px;border:1px solid #3a4150;background:#181c24;color:#e6e8ec;font-size:13px">
+          <button id="btn-submit-task" class="btn primary">🚀 生成</button>
+        </div>
+        <div class="panel-body row" style="gap:8px;flex-wrap:wrap">
+          <input id="task-image" type="file" accept="image/*" multiple style="display:none">
+          <button id="btn-pick-image" class="btn">🖼️ 上传参考图（图生图/图生视频）</button>
+          <span id="task-image-names" class="dim"></span>
+        </div>
+      </div>
+
+      <div class="panel" id="progress-panel" hidden>
+        <div class="panel-title">🎨 当前任务进度 <span class="dim" style="font-weight:normal">（本地 ComfyUI 实时上报）</span></div>
+        <div class="panel-body">
+          <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="dim" id="progress-text" style="margin-top:8px">—</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">本地能力清单 <span class="dim" style="font-weight:normal">（代理动态发现，LLM 智能调度依据）</span></div>
+        <div class="panel-body row" id="cap-row">
+          <span class="dim">加载中…</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">📋 任务队列 <span class="dim" style="font-weight:normal">（异步任务：状态 / 提示词 / 产物）</span></div>
+        <div class="panel-body" id="task-queue">
+          <span class="dim">暂无任务记录</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">实时事件流 <span class="dim" style="font-weight:normal">（SSE 推送 · 2 秒心跳）</span></div>
+        <div class="panel-body"><div id="events"></div></div>
+      </div>
+    </section>
+
+    <!-- ============ 产物库 ============ -->
+    <section id="tab-gallery" class="pane" hidden>
+      <div class="panel">
+        <div class="panel-title">🖼️ 产物库 <span class="dim" style="font-weight:normal">（所有历史产物 · 下载 / 发送到群聊 / 删除）</span></div>
+        <div class="panel-body"><div id="gallery-grid" class="gallery"><span class="dim">加载中…</span></div></div>
+      </div>
+    </section>
+
+    <!-- ============ 任务队列 ============ -->
+    <section id="tab-queue" class="pane" hidden>
+      <div class="panel">
+        <div class="panel-title">📋 任务队列 <span class="dim" style="font-weight:normal">（状态 / 审批 / 产物操作）</span></div>
+        <div class="panel-body"><div id="queue-list"><span class="dim">加载中…</span></div></div>
+      </div>
+    </section>
+
+    <!-- ============ 工作流 ============ -->
+    <section id="tab-workflows" class="pane" hidden>
+      <div class="two-col">
+        <div class="panel" style="margin-top:0">
+          <div class="panel-title">本地工作流 <span id="wf-count" class="dim" style="font-weight:normal"></span></div>
+          <div class="panel-body">
+            <div id="wf-list" class="dim">加载中…</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="row" style="margin-bottom:8px">
+            <span id="wf-title" style="font-size:15px;font-weight:bold">选择左侧工作流查看图形</span>
+            <span id="wf-fmt" class="badge"></span>
+            <span class="spacer"></span>
+            <button id="btn-json" class="ghost">查看 JSON</button>
+          </div>
+          <div id="graph-container">
+            <div id="graph-tip">🖱️ 滚轮缩放 · 拖拽平移（只读展示）</div>
+          </div>
+          <div id="json-panel" class="panel" style="display:none">
+            <div class="panel-title">工作流 JSON</div>
+            <div class="panel-body"><textarea id="json-view" rows="18" readonly></textarea></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 设置 ============ -->
+    <section id="tab-settings" class="pane" hidden>
+      <div class="two-col">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <!-- 智能调度 -->
+          <div class="card" style="margin:0">
+            <h3>🧠 智能调度</h3>
+            <div class="field">
+              <label>启用 LLM 智能调度</label>
+              <label class="switch"><input type="checkbox" id="router_enabled"><span class="slider"></span></label>
+              <div class="hint">/remote do 与 remote_local_compute 的决策方式；关闭后只用关键词规则匹配</div>
+            </div>
+            <div class="field">
+              <label for="router_provider">路由大模型</label>
+              <select id="router_provider"></select>
+              <div class="hint">留空 = 默认跟随 AstrBot 当前会话使用的模型；下拉只列 AstrBot 已配置的提供商/模型</div>
+            </div>
+            <div class="field">
+              <label for="router_temperature">决策温度</label>
+              <input id="router_temperature" type="number" min="0" max="1" step="0.1">
+              <div class="hint">越低越稳定，建议 0.1</div>
+            </div>
+            <div class="field">
+              <label for="router_timeout">决策超时（秒）</label>
+              <input id="router_timeout" type="number" min="5" step="1">
+            </div>
+          </div>
+
+          <!-- 提示词模板 -->
+          <div class="card" style="margin:0">
+            <h3>📝 调度决策提示词</h3>
+            <div class="field">
+              <label>一级分类提示词</label>
+              <div style="display:flex;flex-direction:column;gap:6px;grid-column:2;min-width:0">
+                <textarea id="router_system_prompt" rows="7" spellcheck="false"></textarea>
+                <div class="row"><button id="btn-reset-router" class="ghost">↩ 恢复默认</button></div>
+                <div class="hint">让 LLM 判断任务类型（image/video/audio/text）。提示词增强模板已由「子分类配置」各行独立管理，不再提供全局模板</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 隧道服务 -->
+          <div class="card" style="margin:0">
+            <h3>🛰️ 隧道服务</h3>
+            <div class="field">
+              <label for="server_host">监听地址</label>
+              <input id="server_host" placeholder="0.0.0.0">
+            </div>
+            <div class="field">
+              <label for="server_port">监听端口</label>
+              <input id="server_port" type="number" min="1" max="65535">
+              <div class="hint">修改后隧道服务自动重启，本地代理会自动重连</div>
+            </div>
+            <div class="field">
+              <label>认证 token</label>
+              <div class="row">
+                <input id="auth_token_view" type="password" style="flex:1" value="" readonly>
+                <button id="btn-token-eye" class="ghost" title="点击显示/隐藏">👁</button>
+                <button id="btn-token" class="danger">重新生成</button>
+              </div>
+              <div class="hint">默认隐藏，点击 👁 查看；生成后需同步到本地 YunxinAgent 的配置（两边必须一致）</div>
+            </div>
+            <div class="field">
+              <label for="request_timeout">请求超时（秒）</label>
+              <input id="request_timeout" type="number" min="10" step="1">
+            </div>
+            <div class="field">
+              <label for="comfyui_timeout">生图超时（秒）</label>
+              <input id="comfyui_timeout" type="number" min="30" step="10">
+            </div>
+            <div class="field">
+              <label>TLS 加密</label>
+              <span class="badge warning">即将支持（P1）</span>
+              <div class="hint">内置 wss:// 与自签证书生成正在开发；目前建议用 Nginx 反代加证书</div>
+            </div>
+          </div>
+
+          <!-- 存储 -->
+          <div class="card" style="margin:0">
+            <h3>🗄️ 存储</h3>
+            <div class="field">
+              <label>媒体缓存</label>
+              <div class="row"><span id="media-info" class="dim">加载中…</span><button id="btn-clear-media" class="danger">清理</button></div>
+              <div class="hint">云端生成的图片/视频缓存，清理不影响本地文件</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <!-- 子分类配置 -->
+          <div class="card" style="margin:0">
+            <h3>🎯 子分类配置</h3>
+            <div id="subtype-configs" class="dim">加载中…</div>
+            <div class="hint dim" style="margin-top:8px">每个子分类独立配置：默认工作流（按识别类别过滤）+ LLM（可选）+ 提示词模板（可选，支持 {policy}）。先在工作流页点「🤖 LLM 识别工作流」生成标签。</div>
+          </div>
+
+          <!-- 功能开关 -->
+          <div class="card" style="margin:0">
+            <h3>🧰 功能开关</h3>
+            <div class="field">
+              <label>Shell 能力（双端）</label>
+              <label class="switch"><input type="checkbox" id="enable_shell"><span class="slider"></span></label>
+              <div class="hint">危险功能：云端开启后，本地代理 shell.enabled 也必须为 true 才生效，且仅管理员可指令调用</div>
+            </div>
+            <div class="field">
+              <label>NSFW 内容开关</label>
+              <label class="switch"><input type="checkbox" id="nsfw_enabled"><span class="slider"></span></label>
+              <div class="hint">关闭时提示词增强强制 SFW（安全向）并在负提示词中加入屏蔽词；开启后允许成人内容</div>
+            </div>
+            <div class="field">
+              <label>接单先回复</label>
+              <label class="switch"><input type="checkbox" id="notify_on_start"><span class="slider"></span></label>
+              <div class="hint">收到生成请求后先回一句「已提交/正在分析」；关闭则静默执行</div>
+            </div>
+            <div class="field">
+              <label>提示词确认</label>
+              <select id="prompt_confirm_mode">
+                <option value="auto">自动执行（完成后附注提示词）</option>
+                <option value="manual">人工确认（先展示提示词，回复「确认」才执行）</option>
+              </select>
+              <div class="hint">人工确认模式下，生成前会先把增强后的提示词和类别发到聊天里，你回复「确认/取消」后才执行</div>
+            </div>
+          </div>
+
+          <!-- LLM 工具 -->
+          <div class="card" style="margin:0">
+            <h3>🔌 LLM 工具开关</h3>
+            <div id="tools-list" class="dim">加载中…</div>
+            <div class="hint dim" style="margin-top:8px">控制云端 LLM 能看到哪些本插件工具；工作流预设工具随预设配置自动生成</div>
+          </div>
+
+          <!-- 危险区 -->
+          <div class="card" style="margin:0">
+            <h3>⚠️ 危险区</h3>
+            <div class="field">
+              <label>恢复默认配置</label>
+              <button id="btn-reset" class="danger">填入默认值</button>
+              <div class="hint">只把表单填回默认值，仍需点「保存全部设置」才会生效</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 增强对话 ============ -->
+    <section id="tab-enhance" class="pane" hidden>
+      <div class="panel">
+        <div class="panel-title">🧠 子 LLM 增强对话 <span class="dim" style="font-weight:normal">（每个已配置模板的子分类 = 一个对话）</span></div>
+        <div class="panel-body">
+          <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <button id="btn-enhance-init" class="btn primary">⚡ 初始化全部对话（为已配置子分类预创建）</button>
+            <button id="btn-enhance-refresh" class="btn">🔄 刷新</button>
+            <span id="enhance-session-info" class="dim"></span>
+          </div>
+          <div class="hint" style="margin-bottom:8px">
+            每个「已配置提示词模板」的子分类（如 text2image / text2video）对应一个对话：
+            点「初始化」会用该子分类的模板把 system prompt 注入一次并创建对话；
+            之后每次生成任务，子 LLM 沿用这个对话（只追加你的新需求），不重开新对话。
+            已初始化的对话在这里可查看每轮「你的需求 → 生成的提示词」。
+          </div>
+          <div id="enhance-sessions" class="dim">加载中…</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div id="toast"></div>
+<input type="file" id="file-input" accept=".json" style="display:none">
+<script src="/api/plugin/page/bridge-sdk.js"></script>
+<script src="./assets/litegraph.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>进度条样式选择器 · 云信互联</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=VT323&display=swap" rel="stylesheet">
+<style>
+:root{--cyan:#00e5ff;--magenta:#ff2e88;--yellow:#ffd60a;--bg:#0a0e1a;--panel:#121a30;--panel2:#0e1526;--line:#2a3b66;--white:#e8f0ff;--dim:#6b7ba8}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Exo 2','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--white);padding:30px}
+h1{font-family:'Orbitron';letter-spacing:3px;font-size:20px;margin-bottom:8px;text-shadow:0 0 12px rgba(0,229,255,.6)}
+h1::before{content:"// ";color:var(--magenta)}
+.sub{font-family:'VT323';font-size:17px;color:var(--dim);margin-bottom:26px;letter-spacing:1px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+.item{background:var(--panel);border:2px solid var(--line);border-radius:10px;padding:18px;position:relative}
+.item:hover{border-color:var(--cyan)}
+.item .head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.item .no{font-family:'Orbitron';font-size:13px;color:#04121a;background:var(--cyan);border-radius:4px;padding:2px 9px;font-weight:700}
+.item .name{font-size:13.5px;color:var(--white)}
+.item .desc{font-size:11.5px;color:var(--dim);margin-top:3px}
+.bar-box{height:46px;display:flex;align-items:center}
+/* 共用长条外观 */
+.track{position:relative;width:100%;height:20px;background:#060b18;border:2px solid #123a52;border-radius:4px;overflow:hidden}
+
+/* A: 长条 + 斜纹填充（宽度增长） */
+.pa .fill{position:absolute;left:0;top:0;bottom:0;width:0;
+  background:repeating-linear-gradient(-45deg,var(--cyan) 0 12px,#7ff5ff 12px 24px);
+  animation:pa 2.4s ease-in-out infinite}
+@keyframes pa{0%{width:0}60%{width:85%}100%{width:85%}}
+
+/* B: 分段斜纹块（独立小斜块逐个点亮） */
+.pb{display:flex;gap:6px}
+.pb .seg{flex:1;height:20px;border-radius:3px;background:#060b18;border:2px solid #123a52;
+  background:repeating-linear-gradient(-45deg,rgba(0,229,255,.12) 0 5px,transparent 5px 10px)}
+.pb .seg.on{background:repeating-linear-gradient(-45deg,var(--cyan) 0 5px,#7ff5ff 5px 10px);border-color:var(--cyan)}
+
+/* C: 长条 + 连续斜纹流动 */
+.pc .fill{position:absolute;left:0;top:0;bottom:0;width:85%;
+  background:repeating-linear-gradient(-45deg,var(--cyan) 0 14px,var(--magenta) 14px 28px);
+  animation:pc 1.2s linear infinite}
+@keyframes pc{from{background-position-x:0}to{background-position-x:40px}}
+
+/* D: 圆点逐个点亮 */
+.pd{display:flex;gap:9px}
+.pd .dot{width:16px;height:16px;border-radius:50%;background:#060b18;border:2px solid #123a52}
+.pd .dot.on{background:var(--cyan);border-color:#7ff5ff;box-shadow:0 0 10px var(--cyan)}
+
+/* E: 分段方块（固定小方块逐个点亮） */
+.pe{display:flex;gap:8px}
+.pe .seg{width:26px;height:20px;border-radius:3px;background:#060b18;border:2px solid #123a52}
+.pe .seg.on{background:var(--cyan);border-color:#7ff5ff;box-shadow:0 0 10px var(--cyan)}
+
+/* F: 霓虹渐变流水 */
+.pf .fill{position:absolute;left:0;top:0;bottom:0;width:0;
+  background:linear-gradient(90deg,var(--cyan),#4d8dff,var(--magenta));
+  animation:pf 2.6s ease-in-out infinite}
+.pf .fill::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent 0,#fff 50%,transparent 100%);width:40%;
+  animation:pf-glint 1.6s linear infinite}
+@keyframes pf{0%{width:0}55%{width:85%}100%{width:85%}}
+@keyframes pf-glint{from{left:-40%}to{left:110%}}
+
+/* G: 斜像素块扫描（窄条 + 45° 斜像素块，快速扫描） */
+.pg{position:relative;width:100%;height:12px;background:#060b18;border:2px solid #123a52;border-radius:3px;overflow:hidden}
+.pg .fill{position:absolute;left:0;top:0;bottom:0;width:0;
+  background:repeating-linear-gradient(-45deg,var(--cyan) 0 7px,#060b18 7px 9px);
+  animation:pg 1.6s ease-in-out infinite}
+@keyframes pg{0%{width:0}60%{width:88%}100%{width:88%}}
+
+/* H: 长条 + 斜纹 + 高光扫过 */
+.ph .fill{position:absolute;left:0;top:0;bottom:0;width:82%;
+  background:repeating-linear-gradient(-45deg,var(--cyan) 0 12px,#7ff5ff 12px 24px);
+  animation:ph 2.2s ease-in-out infinite}
+.ph .fill::after{content:"";position:absolute;inset:0;width:45%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
+  animation:ph-glint 1.4s linear infinite}
+@keyframes ph{0%{width:0}60%{width:82%}100%{width:82%}}
+@keyframes ph-glint{from{left:-45%}to{left:105%}}
+</style>
+</head>
+<body>
+<h1>进度条样式选择器</h1>
+<div class="sub">LOADING BAR STYLE PICKER · 选一个你满意的（A-H），告诉我编号即可</div>
+
+<div class="grid">
+  <div class="item">
+    <div class="head"><span class="no">A</span><div><div class="name">长条 + 蓝色斜纹小块逐个填满</div><div class="desc">整体长条，内部 45° 蓝色斜条纹从左到右逐段增长</div></div></div>
+    <div class="bar-box pa"><div class="track"><div class="fill"></div></div></div>
+  </div>
+
+  <div class="item">
+    <div class="head"><span class="no">B</span><div><div class="name">分段斜纹块（独立小斜块）</div><div class="desc">长条拆成多个独立斜纹小块，带间隙，逐个点亮</div></div></div>
+    <div class="bar-box pb" id="bB"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div>
+  </div>
+
+  <div class="item">
+    <div class="head"><span class="no">C</span><div><div class="name">连续斜纹流动</div><div class="desc">长条内青/粉斜纹无限流动（跑马灯式）</div></div></div>
+    <div class="bar-box pc"><div class="track"><div class="fill"></div></div></div>
+  </div>
+
+  <div class="item">
+    <div class="head"><span class="no">D</span><div><div class="name">圆点逐个点亮</div><div class="desc">一排霓虹蓝圆点，从左到右依次亮起</div></div></div>
+    <div class="bar-box pd" id="bD"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+  </div>
+
+  <div class="item">
+    <div class="head"><span class="no">E</span><div><div class="name">分段方块（固定小方块）</div><div class="desc">长条拆成固定小方块，带间隙，逐个点亮</div></div></div>
+    <div class="bar-box pe" id="bE"><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div>
+  </div>
+
+  <div class="item">
+    <div class="head"><span class="no">F</span><div><div class="name">霓虹渐变流水</div><div class="desc">青→蓝→粉渐变填充 + 白色高光扫过</div></div></div>
+    <div class="bar-box pf"><div class="track"><div class="fill"></div></div></div>
+  </div>
+
+  <div class="item">
+    <div class="head"><span class="no">G</span><div><div class="name">像素块扫描</div><div class="desc">长条内像素格（青块+深格）从 0 扫到 88%</div></div></div>
+    <div class="bar-box pg"><div class="fill"></div></div>
+  </div>
+
+  <div class="item">
+    <div class="head"><span class="no">H</span><div><div class="name">斜纹 + 高光扫过</div><div class="desc">蓝色斜纹填充 + 一道亮光从左扫到右</div></div></div>
+    <div class="bar-box ph"><div class="track"><div class="fill"></div></div></div>
+  </div>
+</div>
+
+<script>
+// B/D/E 逐个点亮循环
+function cycle(el, sel, ms){
+  const items = el.querySelectorAll(sel);
+  let i = 0;
+  setInterval(()=>{
+    items.forEach(x=>x.classList.remove('on'));
+    items[i].classList.add('on');
+    i = (i+1) % items.length;
+  }, ms);
+}
+cycle(document.getElementById('bB'), '.seg', 200);
+cycle(document.getElementById('bD'), '.dot', 200);
+cycle(document.getElementById('bE'), '.seg', 220);
+</script>
+</body>
+</html>

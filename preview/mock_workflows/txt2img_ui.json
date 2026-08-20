@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    { "id": 4, "type": "CheckpointLoaderSimple", "pos": [40, 220], "widgets_values": ["sd_xl_base_1.0.safetensors"] },
+    { "id": 5, "type": "EmptyLatentImage", "pos": [40, 430], "widgets_values": [1024, 1024, 1] },
+    { "id": 6, "type": "CLIPTextEncode", "pos": [380, 80], "widgets_values": ["__PROMPT__"] },
+    { "id": 7, "type": "CLIPTextEncode", "pos": [380, 300], "widgets_values": ["__NEGATIVE__"] },
+    { "id": 3, "type": "KSampler", "pos": [720, 200], "widgets_values": ["__SEED__", "randomize", "__STEPS__", "__CFG__", "euler", "normal", 1] },
+    { "id": 8, "type": "VAEDecode", "pos": [1040, 220], "widgets_values": [] },
+    { "id": 9, "type": "SaveImage", "pos": [1360, 220], "widgets_values": ["AstrBotRemote"] }
+  ],
+  "links": [
+    [1, 4, 0, 3, 0, "MODEL"],
+    [2, 4, 1, 6, 0, "CLIP"],
+    [3, 4, 1, 7, 0, "CLIP"],
+    [4, 4, 2, 8, 0, "VAE"],
+    [5, 6, 0, 3, 1, "CONDITIONING"],
+    [6, 7, 0, 3, 2, "CONDITIONING"],
+    [7, 5, 0, 3, 3, "LATENT"],
+    [8, 3, 0, 8, 0, "LATENT"],
+    [9, 8, 0, 9, 0, "IMAGE"]
+  ]
+}

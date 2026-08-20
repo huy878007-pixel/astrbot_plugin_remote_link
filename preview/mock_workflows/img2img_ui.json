@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    { "id": 10, "type": "ETN_LoadImageBase64", "pos": [60, 200], "widgets_values": [""] },
+    { "id": 4, "type": "CheckpointLoaderSimple", "pos": [60, 420], "widgets_values": ["sd_xl_base_1.0.safetensors"] },
+    { "id": 12, "type": "Simple String", "pos": [60, 600], "widgets_values": ["修改说明"] },
+    { "id": 6, "type": "CLIPTextEncode", "pos": [400, 100], "widgets_values": ["__PROMPT__"] },
+    { "id": 7, "type": "CLIPTextEncode", "pos": [400, 320], "widgets_values": ["__NEGATIVE__"] },
+    { "id": 11, "type": "VAEEncode", "pos": [400, 480], "widgets_values": [] },
+    { "id": 3, "type": "KSampler", "pos": [760, 240], "widgets_values": ["__SEED__", "randomize", "__STEPS__", "__CFG__", "euler", "normal", "__DENOISE__"] },
+    { "id": 8, "type": "VAEDecode", "pos": [1100, 240], "widgets_values": [] },
+    { "id": 9, "type": "SaveImage", "pos": [1420, 240], "widgets_values": ["AstrBotRemote_img2img"] }
+  ],
+  "links": [
+    [1, 10, 0, 11, 0, "IMAGE"],
+    [2, 11, 0, 3, 3, "LATENT"],
+    [3, 4, 0, 3, 0, "MODEL"],
+    [4, 4, 1, 6, 0, "CLIP"],
+    [5, 4, 1, 7, 0, "CLIP"],
+    [6, 4, 2, 8, 0, "VAE"],
+    [7, 12, 0, 6, 0, "STRING"],
+    [8, 6, 0, 3, 1, "CONDITIONING"],
+    [9, 7, 0, 3, 2, "CONDITIONING"],
+    [10, 3, 0, 8, 0, "LATENT"],
+    [11, 8, 0, 9, 0, "IMAGE"]
+  ]
+}

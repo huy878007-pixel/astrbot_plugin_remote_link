@@ -1,0 +1,72 @@
+{
+  "CheckpointLoaderSimple": {
+    "input": { "required": { "ckpt_name": [["sd_xl_base_1.0.safetensors"], {}] }, "optional": {} },
+    "output": ["MODEL", "CLIP", "VAE"]
+  },
+  "EmptyLatentImage": {
+    "input": { "required": { "width": ["INT", { "default": 1024 }], "height": ["INT", { "default": 1024 }], "batch_size": ["INT", { "default": 1 }] }, "optional": {} },
+    "output": ["LATENT"]
+  },
+  "CLIPTextEncode": {
+    "input": { "required": { "text": ["STRING", { "multiline": true }], "clip": ["CLIP"] }, "optional": {} },
+    "output": ["CONDITIONING"]
+  },
+  "KSampler": {
+    "input": {
+      "required": { "model": ["MODEL"], "positive": ["CONDITIONING"], "negative": ["CONDITIONING"], "latent_image": ["LATENT"] },
+      "optional": {
+        "seed": ["INT", { "default": 0 }],
+        "steps": ["INT", { "default": 20 }],
+        "cfg": ["FLOAT", { "default": 8.0 }],
+        "sampler_name": [["euler"], {}],
+        "scheduler": [["normal"], {}],
+        "denoise": ["FLOAT", { "default": 1.0 }]
+      }
+    },
+    "output": ["LATENT"]
+  },
+  "VAEDecode": {
+    "input": { "required": { "samples": ["LATENT"], "vae": ["VAE"] }, "optional": {} },
+    "output": ["IMAGE"]
+  },
+  "SaveImage": {
+    "input": { "required": { "images": ["IMAGE"], "filename_prefix": ["STRING", { "default": "ComfyUI" }] }, "optional": {} },
+    "output": []
+  },
+  "LoadImage": {
+    "input": { "required": { "image": [["input_photo.png", "image"], {}] }, "optional": {} },
+    "output": ["IMAGE", "MASK"]
+  },
+  "VAEEncode": {
+    "input": { "required": { "pixels": ["IMAGE"], "vae": ["VAE"] }, "optional": {} },
+    "output": ["LATENT"]
+  },
+  "WanVideoModelLoader": {
+    "input": { "required": { "model": [["wan2.1_i2v_480p_14B_bf16.safetensors"], {}], "precision": [["bf16"], {}] }, "optional": {} },
+    "output": ["MODEL", "CLIP", "VAE"]
+  },
+  "WanTextEncode": {
+    "input": { "required": { "text": ["STRING", { "multiline": true }], "clip": ["CLIP"] }, "optional": {} },
+    "output": ["CONDITIONING"]
+  },
+  "WanVideoSampler": {
+    "input": {
+      "required": { "model": ["MODEL"], "conditioning": ["CONDITIONING"] },
+      "optional": {
+        "seed": ["INT", { "default": 0 }],
+        "steps": ["INT", { "default": 20 }],
+        "length": ["INT", { "default": 81 }],
+        "resolution": [["480p", "720p"], {}]
+      }
+    },
+    "output": ["LATENT"]
+  },
+  "WanVideoDecode": {
+    "input": { "required": { "samples": ["LATENT"], "vae": ["VAE"] }, "optional": {} },
+    "output": ["IMAGE"]
+  },
+  "SaveVideo": {
+    "input": { "required": { "video": ["IMAGE"], "filename_prefix": ["STRING", { "default": "ComfyUI" }] }, "optional": {} },
+    "output": []
+  }
+}

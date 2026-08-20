@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>graph debug</title>
+<link rel="stylesheet" href="/pages/console/assets/litegraph.css">
+<style>
+body { background:#16181d; color:#e6e8ec; font-family:Consolas,monospace; font-size:12px; margin:12px; }
+#diag { background:#0e1013; border:1px solid #2b2f36; border-radius:8px; padding:10px; white-space:pre-wrap; margin-bottom:10px; max-height:300px; overflow:auto; }
+#graph-container { position:relative; height:520px; background:#14161a; border:1px solid #2b2f36; }
+#graph-container canvas { background:#14161a; }
+</style>
+</head>
+<body>
+<div id="diag">running…</div>
+<div id="graph-container"></div>
+<script src="/pages/console/assets/litegraph.js"></script>
+<script>
+const DIAG = [];
+function log(...args) { DIAG.push(args.map(a => { try { return typeof a === "object" ? JSON.stringify(a) : String(a); } catch(e){ return String(a);} }).join(" ")); }
+function flush() { document.getElementById("diag").textContent = DIAG.join("\n"); }
+
+const WIDGET_TYPES = ["INT", "FLOAT", "STRING", "BOOLEAN"];
+function isLinkSpec(spec) {
+  if (typeof spec === "string") return true;
+  if (Array.isArray(spec) && spec.length) {
+    const head = spec[0];
+    if (typeof head === "string") return !WIDGET_TYPES.includes(head);
+    return false;
+  }
+  return false;
+}
+function flattenInputs(input) {
+  const out = [];
+  for (const key of ["required", "optional"]) {
+    for (const [name, spec] of Object.entries((input || {})[key] || {})) out.push([name, spec]);
+  }
+  return out;
+}
+function toDisplayFormat(wf, objectInfo) {
+  if (wf && Array.isArray(wf.nodes) && wf.links) {
+    const nodes = (wf.nodes || []).map((n) => ({
+      id: n.id, type: n.type,
+      pos: n.pos || [Math.random()*600, Math.random()*400],
+      widgets_values: n.widgets_values || [], inputs: [], outputs: [],
+    }));
+    const links = (wf.links || []).map((l) => ({ id: l[0], origin_id: l[1], origin_slot: l[2], target_id: l[3], target_slot: l[4], type: l[5] }));
+    return { data: { nodes, links }, typesNeeded: [...new Set(nodes.map((n) => n.type))] };
+  }
+  const nodes = []; const links = []; let idx = 0;
+  for (const [nid, node] of Object.entries(wf || {})) {
+    if (!node || !node.class_type) continue;
+    const x = (idx % 4) * 340 + 60, y = Math.floor(idx / 4) * 260 + 60; idx++;
+    const inputs = flattenInputs(((objectInfo || {})[node.class_type] || {}).input);
+    const widgets = []; let li = 0;
+    for (const [name, spec] of inputs) {
+      if (isLinkSpec(spec)) {
+        const v = (node.inputs || {})[name];
+        if (Array.isArray(v) && v.length === 2) links.push({ id: links.length+1, origin_id: Number(v[0]), origin_slot: v[1], target_id: Number(nid), target_slot: li, type: "*" });
+        li++;
+      } else widgets.push((node.inputs || {})[name]);
+    }
+    nodes.push({ id: Number(nid), type: node.class_type, pos: [x, y], widgets_values: widgets, inputs: [], outputs: [] });
+  }
+  return { data: { nodes, links }, typesNeeded: [...new Set(nodes.map((n) => n.type))] };
+}
+
+const registered = {};
+function registerDynamicTypes(types, objectInfo) {
+  for (const t of types) {
+    if (registered[t] || (LiteGraph.registered_node_types && LiteGraph.registered_node_types[t])) continue;
+    const info = (objectInfo || {})[t] || {};
+    const inputs = flattenInputs(info.input);
+    const widgetNames = inputs.filter(([, s]) => !isLinkSpec(s)).map(([n]) => n);
+    function DynNode() {
+      this.title = t;
+      this.title_color = "#e6e8ec";
+      this.bgcolor = "#23262e";
+      this.color = "#2e3440";
+      this.boxcolor = "#2e3440";
+      this._widgetNames = widgetNames;
+      for (const [name, spec] of inputs) {
+        if (isLinkSpec(spec)) this.addInput(name, Array.isArray(spec) ? spec[0] : spec);
+      }
+      for (const out of info.output || []) {
+        const label = typeof out === "string" ? out : out[0] || "OUT";
+        this.addOutput(label, label);
+      }
+      this.size = [210, Math.max(56, 26 * Math.max(this.inputs.length, widgetNames.length) + 44)];
+    }
+    DynNode.prototype.onDrawForeground = function (ctx) {
+      if (this.flags && this.flags.collapsed) return;
+      const wv = this.widgets_values || [];
+      let y = (LiteGraph.NODE_TITLE_HEIGHT || 20) + 8;
+      ctx.font = "10px Consolas, monospace";
+      ctx.fillStyle = "#c8ccd4";
+      ctx.textAlign = "left";
+      const names = this._widgetNames || [];
+      for (let i = 0; i < wv.length && i < names.length; i++) {
+        let v = JSON.stringify(wv[i]);
+        if (v === undefined) v = "—";
+        if (v.length > 24) v = v.slice(0, 24) + "…";
+        ctx.fillText(names[i] + ": " + v, 6, y);
+        y += 13;
+      }
+    };
+    try {
+      LiteGraph.registerNodeType(t, DynNode);
+      registered[t] = true;
+      log("registered: " + t + " inputs=" + inputs.length + " outputs=" + (info.output || []).length + " widgets=" + widgetNames.length);
+    } catch (e) {
+      log("REGISTER FAIL " + t + ": " + (e && e.message ? e.message : String(e)));
+    }
+  }
+}
+
+async function main() {
+  try {
+    log("LiteGraph version:", LiteGraph.VERSION || "unknown");
+    log("LGraphCanvas?", typeof LiteGraph.LGraphCanvas, "LGraph?", typeof LiteGraph.LGraph);
+    const r1 = await fetch("/api/workflows/read?name=img2img_ui"); const wfResp = await r1.json();
+    const r2 = await fetch("/api/object_info"); const oi = await r2.json();
+    const wf = JSON.parse(wfResp.content);
+    log("workflow nodes:", (wf.nodes || []).length, "links:", (wf.links || []).length);
+    log("object_info keys:", Object.keys(oi).join(","));
+    const display = toDisplayFormat(wf, oi);
+    log("typesNeeded:", display.typesNeeded.join(","));
+    log("display nodes:", display.data.nodes.length, "links:", display.data.links.length);
+    registerDynamicTypes(display.typesNeeded, oi);
+
+    const container = document.getElementById("graph-container");
+    const cv = document.createElement("canvas");
+    cv.style.width = "100%"; cv.style.height = "100%";
+    container.appendChild(cv);
+    log("canvas element:", cv.constructor.name);
+
+    const graph = new LiteGraph.LGraph();
+    const canvas = new LiteGraph.LGraphCanvas(cv, graph);
+    log("LGraphCanvas created OK");
+    canvas.background_image = null;
+    canvas.clear_background = true;
+    graph.configure(display.data, true);
+    log("graph.configure OK; graph nodes:", graph._nodes.length);
+    for (const n of graph._nodes) {
+      log("node id=" + n.id + " type=" + n.type + " title=" + n.title + " has_errors=" + !!n.has_errors + " inputs=" + n.inputs.length + " pos=" + (n.pos ? n.pos[0] + "," + n.pos[1] : "?"));
+    }
+    log("graph links:", graph.links ? Object.keys(graph.links).length : 0);
+    canvas.allow_dragnodes = false;
+    canvas.allow_interaction = false;
+    canvas.allow_searchbox = false;
+    canvas.allow_reconnect_links = false;
+    if (canvas.resize) { canvas.resize(); log("resize() done, canvas size:", cv.width + "x" + cv.height); }
+    if (canvas.setRendering) canvas.setRendering(true); else if (canvas.startRendering) canvas.startRendering();
+    setTimeout(() => {
+      try { canvas.zoomToFit(60); log("zoomToFit OK"); } catch (e) { log("zoomToFit FAIL: " + String(e)); }
+      log("canvas element size now:", cv.width + "x" + cv.height);
+      flush();
+    }, 150);
+    flush();
+  } catch (e) {
+    log("FATAL:", e && e.stack ? e.stack : String(e));
+    flush();
+  }
+}
+main();
+</script>
+</body>
+</html>

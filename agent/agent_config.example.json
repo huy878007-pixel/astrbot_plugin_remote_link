@@ -1,0 +1,24 @@
+{
+  "server_url": "ws://你的云服务器IP:8468/ws",
+  "token": "与云端插件配置 auth_token 一致的密钥",
+  "reconnect_seconds": 5,
+  "request_timeout": 600,
+  "dashboard_host": "127.0.0.1",
+  "dashboard_port": 8899,
+  "comfyui": {
+    "base_url": "http://127.0.0.1:8188",
+    "timeout": 600,
+    "userdata_dir": "D:/ComfyUI/user",
+    "default_checkpoint": "sd_xl_base_1.0.safetensors",
+    "default_workflow_file": ""
+  },
+  "openai": {
+    "base_url": "http://127.0.0.1:11434/v1",
+    "api_key": "",
+    "timeout": 300
+  },
+  "shell": {
+    "enabled": false,
+    "timeout": 60
+  }
+}

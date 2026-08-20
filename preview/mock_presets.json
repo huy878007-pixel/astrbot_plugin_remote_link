@@ -1,0 +1,46 @@
+{
+  "txt2img": {
+    "name": "txt2img",
+    "description": "文生图：使用内置 SDXL 模板画一张图",
+    "workflow": "",
+    "timeout": 0,
+    "params": {
+      "prompt": { "type": "string", "required": true, "description": "正向提示词" },
+      "negative": { "type": "string", "default": "", "description": "负向提示词" },
+      "width": { "type": "int", "default": 1024, "description": "图片宽度" },
+      "height": { "type": "int", "default": 1024, "description": "图片高度" },
+      "steps": { "type": "int", "default": 20, "description": "采样步数" },
+      "cfg": { "type": "float", "default": 7.0, "description": "CFG 引导系数" },
+      "seed": { "type": "int", "default": -1, "description": "随机种子，-1 为随机" },
+      "batch": { "type": "int", "default": 1, "description": "一次生成张数" },
+      "checkpoint": { "type": "string", "default": "", "description": "模型名，留空用本地默认" }
+    }
+  },
+  "img2img": {
+    "name": "img2img",
+    "description": "图生图：基于输入图片重绘",
+    "workflow": "img2img_ui.json",
+    "timeout": 0,
+    "params": {
+      "prompt": { "type": "string", "required": true, "description": "正向提示词" },
+      "negative": { "type": "string", "default": "", "description": "负向提示词" },
+      "steps": { "type": "int", "default": 25, "description": "采样步数" },
+      "cfg": { "type": "float", "default": 7.0, "description": "CFG 引导系数" },
+      "denoise": { "type": "float", "default": 0.6, "description": "重绘幅度 0~1" },
+      "seed": { "type": "int", "default": -1, "description": "随机种子" }
+    }
+  },
+  "wan_video": {
+    "name": "wan_video",
+    "description": "用本地 Wan 视频工作流生成一段短视频",
+    "workflow": "wan_t2v_api.json",
+    "timeout": 3600,
+    "params": {
+      "prompt": { "type": "string", "required": true, "description": "视频内容描述" },
+      "duration": { "type": "int", "default": 5, "description": "视频秒数" },
+      "resolution": { "type": "string", "default": "720p", "description": "分辨率" },
+      "steps": { "type": "int", "default": 20, "description": "采样步数" },
+      "seed": { "type": "int", "default": -1, "description": "随机种子" }
+    }
+  }
+}

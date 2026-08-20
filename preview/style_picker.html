@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>UI 风格选择器 · 示波器 × 复古浪潮</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=VT323&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Exo 2','Microsoft YaHei',sans-serif;background:#06060e;color:#e8f0ff;padding:26px}
+h1{font-family:'Orbitron';letter-spacing:3px;font-size:20px;margin-bottom:6px;color:#fff}
+.sub{font-family:'VT323';font-size:17px;color:#6b7ba8;margin-bottom:24px;letter-spacing:1px}
+.pickers{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:20px}
+
+/* ============ 每种风格独立作用域 ============ */
+.style{border-radius:14px;padding:18px;position:relative;overflow:hidden;border:2px solid}
+.style .s-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.style .s-no{font-family:'Orbitron';font-weight:700;font-size:13px;border-radius:4px;padding:2px 9px;color:#04121a}
+.style .s-name{font-family:'Orbitron';font-size:15px;letter-spacing:2px}
+.style .s-desc{font-size:11.5px;opacity:.7;margin-top:2px}
+.wave{width:100%;height:56px;margin-bottom:10px}
+.wave path{fill:none;stroke-width:2}
+.bar{position:relative;height:12px;background:#05070f;border:1.5px solid;border-radius:3px;overflow:hidden;margin:8px 0 12px}
+.bar .fill{position:absolute;left:0;top:0;bottom:0;width:70%;
+  background:repeating-linear-gradient(-45deg,var(--bc) 0 7px,transparent 7px 9px)}
+.mini{display:flex;gap:8px;flex-wrap:wrap}
+.mini .btn{padding:7px 14px;border-radius:6px;font-size:12px;border:2px solid;cursor:pointer}
+.mini .chip{font-size:11px;padding:4px 9px;border-radius:5px;border:1.5px solid;opacity:.9}
+.swatches{display:flex;gap:6px;margin-top:12px}
+.swatches span{width:22px;height:22px;border-radius:4px;border:1px solid rgba(255,255,255,.15)}
+.scanlines{position:absolute;inset:0;pointer-events:none;opacity:.05;background:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 3px)}
+
+/* ===== A 经典示波器绿 ===== */
+.sA{border-color:#0d5c3a;background:radial-gradient(ellipse at 50% 0%,#06231a 0%,#04120d 70%)}
+.sA .s-no{background:#3dffa0}.sA .s-name{color:#3dffa0;text-shadow:0 0 12px rgba(61,255,160,.6)}
+.sA .wave path{stroke:#3dffa0;filter:drop-shadow(0 0 4px rgba(61,255,160,.7))}
+.sA .bar{border-color:#0d5c3a}.sA .bar .fill{--bc:#3dffa0;box-shadow:0 0 8px rgba(61,255,160,.5)}
+.sA .mini .btn{border-color:#0d5c3a;color:#3dffa0}.sA .mini .btn:hover{box-shadow:0 0 10px rgba(61,255,160,.5)}
+.sA .mini .chip{border-color:#0d5c3a;color:#9fffd0}
+.sA .swatches span:nth-child(1){background:#3dffa0}.sA .swatches span:nth-child(2){background:#0d5c3a}.sA .swatches span:nth-child(3){background:#06231a}.sA .swatches span:nth-child(4){background:#9fffd0}
+.sA .grid-line{position:absolute;inset:0;pointer-events:none;opacity:.05;
+  background:repeating-linear-gradient(90deg,rgba(61,255,160,.6) 0 1px,transparent 1px 26px),
+  repeating-linear-gradient(0deg,rgba(61,255,160,.6) 0 1px,transparent 1px 26px)}
+
+/* ===== B 霓虹示波器（青/洋红） ===== */
+.sB{border-color:#2a3b66;background:radial-gradient(ellipse at 50% 0%,#1b2450 0%,#0a0e1a 72%)}
+.sB .s-no{background:#00e5ff}.sB .s-name{color:#00e5ff;text-shadow:0 0 12px rgba(0,229,255,.6)}
+.sB .wave path{stroke:#00e5ff;filter:drop-shadow(0 0 4px rgba(0,229,255,.7))}
+.sB .bar{border-color:#123a52}.sB .bar .fill{--bc:#00e5ff;box-shadow:0 0 8px rgba(0,229,255,.5)}
+.sB .mini .btn{border-color:#2a3b66;color:#00e5ff}.sB .mini .btn.alt{color:#ff2e88;border-color:#5a1a3a}
+.sB .mini .chip{border-color:#2a3b66;color:#8fd0ff}
+.sB .swatches span:nth-child(1){background:#00e5ff}.sB .swatches span:nth-child(2){background:#ff2e88}.sB .swatches span:nth-child(3){background:#1b2450}.sB .swatches span:nth-child(4){background:#8fd0ff}
+.sB .grid-line{position:absolute;inset:0;pointer-events:none;opacity:.05;
+  background:repeating-linear-gradient(90deg,rgba(0,229,255,.5) 0 1px,transparent 1px 26px),
+  repeating-linear-gradient(0deg,rgba(0,229,255,.5) 0 1px,transparent 1px 26px)}
+
+/* ===== C 故障复古（Netflix 风） ===== */
+.sC{border-color:#5a1a1a;background:radial-gradient(ellipse at 50% 0%,#2a0a0a 0%,#0a0505 72%)}
+.sC .s-no{background:#ff2e4d}.sC .s-name{color:#ff5c7a;text-shadow:0 0 12px rgba(255,92,122,.6)}
+.sC .wave path{stroke:#ff5c7a;filter:drop-shadow(0 0 4px rgba(255,92,122,.7))}
+.sC .bar{border-color:#5a1a1a}.sC .bar .fill{--bc:#ff2e4d;box-shadow:0 0 8px rgba(255,46,77,.5)}
+.sC .mini .btn{border-color:#5a1a1a;color:#ff5c7a}.sC .mini .btn:hover{box-shadow:0 0 10px rgba(255,92,122,.5)}
+.sC .mini .chip{border-color:#5a1a1a;color:#ff9db0}
+.sC .swatches span:nth-child(1){background:#ff2e4d}.sC .swatches span:nth-child(2){background:#5a1a1a}.sC .swatches span:nth-child(3){background:#2a0a0a}.sC .swatches span:nth-child(4){background:#ff9db0}
+.sC .glitch{position:absolute;inset:0;pointer-events:none;opacity:.1;
+  background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(255,255,255,.06) 3px 4px)}
+.sC .glitch::after{content:"";position:absolute;left:-10%;right:-10%;top:30%;height:2px;background:rgba(0,229,255,.5);box-shadow:0 18px 0 rgba(255,46,77,.4),0 -22px 0 rgba(255,214,10,.3);
+  animation:gline 2.5s linear infinite}
+@keyframes gline{0%{transform:translateY(0)}100%{transform:translateY(120px)}}
+
+/* ===== D 电路光晕（OpenAI 风） ===== */
+.sD{border-color:#2a2a5a;background:radial-gradient(ellipse at 60% 20%,#181838 0%,#08081a 75%)}
+.sD .s-no{background:#8a5cff}.sD .s-name{color:#b48cff;text-shadow:0 0 12px rgba(138,92,255,.6)}
+.sD .wave path{stroke:#8a5cff;filter:drop-shadow(0 0 4px rgba(138,92,255,.7))}
+.sD .bar{border-color:#2a2a5a}.sD .bar .fill{--bc:#8a5cff;box-shadow:0 0 8px rgba(138,92,255,.5)}
+.sD .mini .btn{border-color:#2a2a5a;color:#b48cff}.sD .mini .btn.alt{color:#ffd60a;border-color:#5a4a1a}
+.sD .mini .chip{border-color:#2a2a5a;color:#c8b0ff}
+.sD .swatches span:nth-child(1){background:#8a5cff}.sD .swatches span:nth-child(2){background:#ffd60a}.sD .swatches span:nth-child(3){background:#00e5ff}.sD .swatches span:nth-child(4){background:#181838}
+.sD .nodes{position:absolute;inset:0;pointer-events:none;opacity:.12}
+.sD .nodes i{position:absolute;width:4px;height:4px;border-radius:50%;background:#ffd60a;box-shadow:0 0 6px #ffd60a}
+
+/* 波形动画 */
+.wave path{stroke-dasharray:8 4;animation:dash 1s linear infinite}
+@keyframes dash{to{stroke-dashoffset:-12}}
+</style>
+</head>
+<body>
+<h1>UI 风格选择器 · 示波器 × 复古浪潮</h1>
+<div class="sub">OSCILLOSCOPE · RETRO WAVE STYLE PICKER · 选一个（A-D），告诉我编号即可</div>
+
+<div class="pickers">
+
+  <!-- A -->
+  <div class="style sA">
+    <div class="scanlines"></div><div class="grid-line"></div>
+    <div class="s-head"><span class="s-no">A</span><div><div class="s-name">Oscilloscope Green</div><div class="s-desc">经典示波器 · 荧光绿波形 + 刻度网格</div></div></div>
+    <svg class="wave" viewBox="0 0 400 56" preserveAspectRatio="none"><path d="M0 28 Q10 4 20 28 T40 28 T60 28 T80 28 T100 28 T120 28 T140 28 T160 28 T180 28 T200 28 T220 28 T240 28 T260 28 T280 28 T300 28 T320 28 T340 28 T360 28 T380 28 T400 28" stroke-width="2"/><circle cx="380" cy="28" r="3" fill="#3dffa0"/></svg>
+    <div class="bar"><div class="fill"></div></div>
+    <div class="mini"><button class="btn">🚀 生成</button><button class="btn">上传</button><span class="chip">在线</span><span class="chip">5.2/8GB</span></div>
+    <div class="swatches"><span></span><span></span><span></span><span></span></div>
+  </div>
+
+  <!-- B -->
+  <div class="style sB">
+    <div class="scanlines"></div><div class="grid-line"></div>
+    <div class="s-head"><span class="s-no">B</span><div><div class="s-name">Neon Oscilloscope</div><div class="s-desc">霓虹示波器 · 青波形 + 洋红强调</div></div></div>
+    <svg class="wave" viewBox="0 0 400 56" preserveAspectRatio="none"><path d="M0 28 Q10 4 20 28 T40 28 T60 28 T80 28 T100 28 T120 28 T140 28 T160 28 T180 28 T200 28 T220 28 T240 28 T260 28 T280 28 T300 28 T320 28 T340 28 T360 28 T380 28 T400 28" stroke-width="2"/><circle cx="380" cy="28" r="3" fill="#00e5ff"/></svg>
+    <div class="bar"><div class="fill"></div></div>
+    <div class="mini"><button class="btn">🚀 生成</button><button class="btn alt">参考图</button><span class="chip">运行中</span><span class="chip">2 任务</span></div>
+    <div class="swatches"><span></span><span></span><span></span><span></span></div>
+  </div>
+
+  <!-- C -->
+  <div class="style sC">
+    <div class="scanlines"></div><div class="glitch"></div>
+    <div class="s-head"><span class="s-no">C</span><div><div class="s-name">Retro Glitch</div><div class="s-desc">故障复古 · Netflix 风 RGB 故障条纹 + 噪点</div></div></div>
+    <svg class="wave" viewBox="0 0 400 56" preserveAspectRatio="none"><path d="M0 28 Q10 4 20 28 T40 28 T60 28 T80 28 T100 28 T120 28 T140 28 T160 28 T180 28 T200 28 T220 28 T240 28 T260 28 T280 28 T300 28 T320 28 T340 28 T360 28 T380 28 T400 28" stroke-width="2"/><circle cx="380" cy="28" r="3" fill="#ff5c7a"/></svg>
+    <div class="bar"><div class="fill"></div></div>
+    <div class="mini"><button class="btn">🚀 生成</button><button class="btn">上传</button><span class="chip">任务队列</span><span class="chip">ERR</span></div>
+    <div class="swatches"><span></span><span></span><span></span><span></span></div>
+  </div>
+
+  <!-- D -->
+  <div class="style sD">
+    <div class="scanlines"></div><div class="nodes"><i style="left:8%;top:20%"></i><i style="left:20%;top:70%"></i><i style="left:75%;top:15%"></i><i style="left:88%;top:60%"></i><i style="left:55%;top:85%"></i><i style="left:35%;top:30%"></i></div>
+    <div class="s-head"><span class="s-no">D</span><div><div class="s-name">Circuit Halo</div><div class="s-desc">电路光晕 · 紫 + 彩色节点 + 信号线条</div></div></div>
+    <svg class="wave" viewBox="0 0 400 56" preserveAspectRatio="none"><path d="M0 28 Q10 4 20 28 T40 28 T60 28 T80 28 T100 28 T120 28 T140 28 T160 28 T180 28 T200 28 T220 28 T240 28 T260 28 T280 28 T300 28 T320 28 T340 28 T360 28 T380 28 T400 28" stroke-width="2"/><circle cx="380" cy="28" r="3" fill="#8a5cff"/></svg>
+    <div class="bar"><div class="fill"></div></div>
+    <div class="mini"><button class="btn">🚀 生成</button><button class="btn alt">设置</button><span class="chip">LLM 在线</span><span class="chip">3 模型</span></div>
+    <div class="swatches"><span></span><span></span><span></span><span></span></div>
+  </div>
+
+</div>
+</body>
+</html>

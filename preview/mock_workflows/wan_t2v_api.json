@@ -1,0 +1,17 @@
+{
+  "1": { "class_type": "WanVideoModelLoader", "inputs": { "model": "__MODEL__", "precision": "bf16" } },
+  "2": { "class_type": "WanTextEncode", "inputs": { "text": "__PROMPT__", "clip": ["1", 0] } },
+  "3": {
+    "class_type": "WanVideoSampler",
+    "inputs": {
+      "model": ["1", 1],
+      "conditioning": ["2", 0],
+      "seed": "__SEED__",
+      "steps": "__STEPS__",
+      "length": "__DURATION__",
+      "resolution": "__RESOLUTION__"
+    }
+  },
+  "4": { "class_type": "WanVideoDecode", "inputs": { "samples": ["3", 0], "vae": ["1", 2] } },
+  "5": { "class_type": "SaveVideo", "inputs": { "filename_prefix": "AstrBotRemote", "video": ["4", 0] } }
+}

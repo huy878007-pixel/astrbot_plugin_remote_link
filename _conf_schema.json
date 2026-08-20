@@ -1,0 +1,107 @@
+{
+  "auth_token": {
+    "description": "本地代理连接隧道的共享密钥。本地 agent_config.json 的 token 必须与此完全一致；同时用作 OpenAI 兼容代理的 API Key。强烈建议设置一个足够长的随机串。",
+    "type": "string",
+    "hint": "本地 agent_config.json 的 token 与此一致；云端 AstrBot 添加本地 LLM 提供商时，api_key 也填这个值",
+    "obvious_hint": true
+  },
+  "server_host": {
+    "description": "隧道服务监听地址。0.0.0.0 表示监听所有网卡（Docker 部署必须用 0.0.0.0）。",
+    "type": "string",
+    "default": "0.0.0.0"
+  },
+  "server_port": {
+    "description": "隧道服务监听端口。Docker 部署需要在容器外映射此端口，云服务器防火墙需放行。",
+    "type": "int",
+    "default": 8468
+  },
+  "request_timeout": {
+    "description": "普通隧道请求超时（秒），例如查询模型列表、本地 LLM 对话。",
+    "type": "int",
+    "default": 300
+  },
+  "comfyui_timeout": {
+    "description": "ComfyUI 工作流默认执行超时（秒）。视频类工作流可能非常久，可在单个预设的 timeout 字段里覆盖。",
+    "type": "int",
+    "default": 3600
+  },
+  "prompt_confirm_mode": {
+    "description": "提示词确认开关：auto = 自动执行（增强后的提示词直接提交，完成后附注提示词）；manual = 人工确认（先展示增强后的提示词和类别，等你在聊天里回复「确认」才执行，回复「取消」放弃）。",
+    "type": "list",
+    "default": "auto",
+    "items": ["auto", "manual"]
+  },
+  "enable_shell": {
+    "description": "是否允许通过隧道在本地电脑执行命令。危险功能：开启后仅管理员（/remote shell）和云端 LLM 的 remote_shell 工具可用，且本地代理 shell.enabled 也必须为 true 才生效。",
+    "type": "bool",
+    "default": false
+  },
+  "nsfw_enabled": {
+    "description": "NSFW 内容开关：开启后允许生成成人内容；关闭时提示词增强强制 SFW（安全向），并在负提示词中自动加入屏蔽词。",
+    "type": "bool",
+    "default": false
+  },
+  "notify_on_start": {
+    "description": "接单先回复：收到生成请求后先回复一句「已提交/正在分析」，长任务期间用户有反馈；关闭则静默执行，完成后直接发结果。",
+    "type": "bool",
+    "default": true
+  },
+  "llm_model": {
+    "description": "调用本地 LLM 时默认使用的模型名。留空则使用本地接口的默认模型（Ollama 必须填写，例如 qwen2.5:14b）。",
+    "type": "string",
+    "default": ""
+  },
+  "router_enabled": {
+    "description": "是否启用 LLM 智能调度（/remote do 与 remote_local_compute 工具）。关闭后只用关键词规则匹配。",
+    "type": "bool",
+    "default": true
+  },
+  "router_provider": {
+    "description": "智能调度使用的 LLM 提供商。留空 = 跟随 AstrBot 当前会话使用的提供商（默认）；也可指定一个提供商。",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
+  "router_model": {
+    "description": "智能调度用的模型名。留空使用所选提供商的默认模型。",
+    "type": "string",
+    "default": ""
+  },
+  "router_temperature": {
+    "description": "智能调度的温度（0~1，越低决策越稳定，建议 0.1）。",
+    "type": "float",
+    "default": 0.1
+  },
+  "router_timeout": {
+    "description": "智能调度的 LLM 决策超时（秒）。",
+    "type": "int",
+    "default": 60
+  },
+  "router_system_prompt": {
+    "description": "智能调度的决策提示词（自定义分析提示词）。留空使用内置默认：让 LLM 根据能力清单输出 JSON 决策（选工作流/本地 LLM、填参数）。",
+    "type": "text",
+    "default": "",
+    "editor_mode": true
+  },
+  "enhance_system_prompt": {
+    "description": "提示词增强的模板提示词（自然语言 → 英文 tag 正/负提示词）。支持 {policy} 占位符（会被替换为 NSFW 策略说明）。留空使用内置默认。",
+    "type": "text",
+    "default": "",
+    "editor_mode": true
+  },
+  "workflow_analysis": {
+    "description": "工作流识别结果（由控制台「LLM 识别工作流」按钮生成，自动管理，无需手改）：每个工作流的类别/子类/说明/标签。",
+    "type": "text",
+    "default": ""
+  },
+  "default_workflows": {
+    "description": "默认工作流配置（由控制台设置页「默认工作流」管理，自动管理）：{\"image\": \"文生图工作流名\", \"video\": \"视频工作流名\", \"audio\": \"音频工作流名\"}。",
+    "type": "text",
+    "default": ""
+  },
+  "subtype_configs": {
+    "description": "子分类配置表（由控制台设置页「子分类配置」管理，自动管理）：每个子分类（文生图/图生图/画面分析提示词/文生视频/单图生视频/多图生视频/音频生成）可独立配置默认工作流、LLM 提供商/模型、提示词模板。",
+    "type": "text",
+    "default": ""
+  }
+}

@@ -1,0 +1,18 @@
+# 统一换行符：仓库内一律 LF，检出时按平台自动处理
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不做换行符转换
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.zip binary
+*.exe binary
+*.safetensors binary
+*.mp4 binary

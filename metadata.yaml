@@ -1,0 +1,21 @@
+name: astrbot_plugin_remote_link
+desc: 云信互联：让云端 AstrBot 通过反向隧道调用你本地电脑上的模型（ComfyUI 任意工作流 / 本地 LLM / Shell）
+display_name: 云信互联 Yunxin Interconnect
+short_desc: 云信互联：云端 AstrBot ↔ 本地电脑隧道，调用本地 ComfyUI 工作流、本地 LLM
+author: you
+version: v0.1.0
+repo: ""
+tags:
+  - comfyui
+  - 本地模型
+  - 隧道
+  - 文生图
+  - 视频生成
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - wecom
+  - discord
+  - lark
+astrbot_version: ">=4.5.1,<5"
