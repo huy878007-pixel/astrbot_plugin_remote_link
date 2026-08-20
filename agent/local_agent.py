@@ -230,11 +230,22 @@ def convert_ui_to_api(workflow: dict, object_info: dict) -> dict:
         links = rewired
 
     prompt: dict = {}
+    # 节点 title 标签 → 角色（正面/负面提示词框），供 auto_inject_prompt 优先使用。
+    # 用户可在 ComfyUI 里把 CLIPTextEncode 节点的 Title 改成「正面提示词/负面提示词」
+    # （或含 positive/negative），插件 100% 按标签注入，不依赖内容猜测。
+    role_hints: dict[str, str] = {}
     for node in nodes:
         ntype = node.get("type")
         nid = node.get("id")
         if ntype in SKIP_NODE_TYPES or nid in muted:
             continue
+        title = str(node.get("title") or "")
+        if title:
+            tl = title.lower()
+            if POS_TITLE_RE.search(tl):
+                role_hints[str(nid)] = "positive"
+            elif NEG_TITLE_RE.search(tl):
+                role_hints[str(nid)] = "negative"
         info = object_info.get(ntype)
         if not info:
             if nid not in linked_ids:
@@ -350,6 +361,9 @@ def convert_ui_to_api(workflow: dict, object_info: dict) -> dict:
                     ):
                         wi += 1
         prompt[str(nid)] = {"class_type": ntype, "inputs": node_inputs}
+    # 附加 title 角色标签（内部约定 key，注入时读取并清理，不提交给 ComfyUI）
+    if role_hints:
+        prompt[ROLE_HINTS_KEY] = role_hints
     return prompt
 
 
@@ -433,19 +447,68 @@ POS_LIKE_RE = re.compile(
     r"masterpiece|best quality|high quality|highly detailed|1girl|1boy|anime|photo", re.I
 )
 
+# 节点 Title 标签（用户自定义，优先于内容启发式）：
+#  - 正面：标题含「正面/正提示/正向/positive」；
+#  - 负面：标题含「负面/负提示/负向/negative」。
+POS_TITLE_RE = re.compile(r"正面|正向|positive|prompt", re.I)
+NEG_TITLE_RE = re.compile(r"负面|负向|negative", re.I)
+# 内部约定 key：UI→API 转换时收集的「节点 title 标签 → 角色」映射，
+# auto_inject_prompt 读取后删除，绝不提交给 ComfyUI（大写、双下划线包裹、非合法节点名）。
+ROLE_HINTS_KEY = "__YUNXIN_ROLE_HINTS__"
+
 
 def auto_inject_prompt(prompt_data: dict, params: dict) -> None:
     """无 __PROMPT__/__NEGATIVE__ 占位符的工作流：自动识别正/负提示词框并填入。
 
-    识别规则（启发式，与常见工作流约定一致）：
-      - 候选 = 带文本输入的节点（CLIPTextEncode 或名字含 Text/String/Multiline/Prompt）；
-      - 负提示词框 = 当前内容像负面词（worst quality/bad anatomy/…）的候选；
-      - 正提示词框 = 其余候选中第一个（优先内容像正面词）。
+    识别优先级（自上而下）：
+      1. 【用户标签】转换器收集的节点 title 标签（节点 Title 含「正面/positive」或
+         「负面/negative」）—— 最可靠，不同用户工作流节点 ID 各异也 100% 准确；
+      2. 【内容启发式】负框 = 内容像负面词（worst quality/bad anatomy/…）的候选；
+         正框 = 其余候选中第一个（优先内容像正面词）；
+      3. 【兜底】没认出负框时，取「未被选为正框」的其他文本节点；单节点时保守跳过
+         负面注入（避免把负面词覆盖进唯一提示词框）。
     """
     positive = str(params.get("PROMPT") or params.get("prompt") or "").strip()
     negative = str(params.get("NEGATIVE") or params.get("negative") or "").strip()
     if not positive and not negative:
         return
+
+    # 1) 用户 title 标签优先（转换器收集，存于内部约定 key；读取后清理）
+    hints = prompt_data.pop(ROLE_HINTS_KEY, None) or {}
+    if hints:
+        neg_hint = pos_hint = None
+        for nid, role in hints.items():
+            node = prompt_data.get(nid)
+            if not node or not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs") or {}
+            if not isinstance(inputs, dict):
+                continue
+            text_key = None
+            if isinstance(inputs.get("text"), str):
+                text_key = "text"
+            else:
+                for k in TEXT_INPUT_NAMES:
+                    if isinstance(inputs.get(k), str):
+                        text_key = k
+                        break
+            if text_key is None:
+                continue
+            if role == "negative" and neg_hint is None:
+                neg_hint = (nid, node, text_key)
+            elif role == "positive" and pos_hint is None:
+                pos_hint = (nid, node, text_key)
+        if (positive and pos_hint) or (negative and neg_hint):
+            # 有标签时完全按标签注入（不依赖内容猜测）
+            if positive and pos_hint:
+                pos_hint[1]["inputs"][pos_hint[2]] = positive
+                logger.info(f"[remote_link] 按节点标签注入正提示词 → 节点 {pos_hint[0]}")
+            if negative and neg_hint:
+                neg_hint[1]["inputs"][neg_hint[2]] = negative
+                logger.info(f"[remote_link] 按节点标签注入负提示词 → 节点 {neg_hint[0]}")
+            return
+
+    # 2) 内容启发式（无标签 / 标签节点不可注入时）
     text_nodes: list = []
     for nid, node in prompt_data.items():
         if not isinstance(node, dict):
@@ -1419,6 +1482,8 @@ class LocalAgent:
                     "请在插件预设的 params 里为这些 token 定义参数"
                 )
         prompt_data = json.loads(wf_str)
+        # 兜底清理：内部约定 key 绝不允许提交给 ComfyUI（即使未触发注入）
+        prompt_data.pop(ROLE_HINTS_KEY, None)
 
         # 2.5 约定入口节点注入（图片 base64 / 上传文件 / 文本 / 视频）+ 负种子随机化
         merged_inject = dict(inject)
