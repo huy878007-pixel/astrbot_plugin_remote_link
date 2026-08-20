@@ -3105,20 +3105,22 @@ class RemoteLinkPlugin(Star):
         text = self._raw_user_text(event)
         if not text or text.startswith(("/", "remote ")):
             return False
-        # A. 祈使开头 + 产物词
+        # A. 祈使开头（@ 机器人 + 生成动词开头即视为生成请求）。
+        # 不再强制"含产物词"——真实需求如「生成一位身穿战术服的军械少女，手持一把枪械」
+        # 没有图/画/图片等字样，旧判定会漏判，进而被「取历史产物」逻辑抢走发旧图。
         prefixes = (
             "生成", "画", "做", "制作", "来一张", "来段", "来张", "来首", "来一首", "来一个",
             "给我生成", "帮我生成", "给我画", "帮我画", "帮我做", "给我做", "请生成", "请画",
             "创建", "设计", "写一首", "做一段", "生成一段", "换一个", "给我来",
         )
+        if any(text.startswith(p) for p in prefixes):
+            return True
+        # B. 口语化「再/换/新」：再来一张 / 换个风格 / 重新生成 / 换张图 …
+        #    需要明确是"生成新的"语义，且（含产物词 或 最近有产物可参考类型）。
         media = (
             "图片", "图", "照片", "插画", "头像", "壁纸", "海报", "封面",
             "视频", "动画", "短片", "音乐", "音频", "歌曲", "配音", "音效", "画", "曲",
         )
-        if any(text.startswith(p) for p in prefixes) and any(m in text for m in media):
-            return True
-        # B. 口语化「再/换/新」：再来一张 / 换个风格 / 重新生成 / 换张图 …
-        #    需要明确是"生成新的"语义，且（含产物词 或 最近有产物可参考类型）。
         rephrases = (
             "再来一张", "再来张", "再来个", "再来一", "再来一段", "再来首",
             "再画", "再生成", "再做一个", "再做个",
@@ -3232,7 +3234,12 @@ class RemoteLinkPlugin(Star):
             "音乐": "audio",
         }
         want_kind = next((k for w, k in KIND_WORDS.items() if w in text), None)
-        # 排除生成类表达（"换张图/再来一张/重新生成"是生成新的，不是取历史产物）
+        # 排除生成类表达：复用 _is_direct_generation_command 的完整判定，
+        # 而不是在这里维护第二份关键词表——「帮我生成一张图片」同时含产物词「图片」和
+        # 「给/发」类动词，旧的短名单（换/再来/重新…）拦不住，会被误判成索取历史产物，
+        # 于是新任务直接回了上一次的旧图。
+        if self._is_direct_generation_command(event):
+            return  # 交给生成接管（见 _on_any_message 的直接指令分支）
         if any(g in text for g in ("换", "再来", "重新", "再画", "再生成", "重来")):
             return  # 交给生成接管（_is_direct_generation_command）
         want_send = bool(re.search(r"(发|给|看看|看下|给我看|拿|取)", text)) or "最新" in text
