@@ -2465,29 +2465,46 @@ class RemoteLinkPlugin(Star):
 
         兼容多种图片组件字段（url / file / path / raw）与 file:// 前缀；
         拿不到明确来源时也记录原始字段值，交由 _materialize_images 兜底下载。
+
+        **包含引用（回复）段里的图片**：群里常见用法是「先发一张图 → 引用它 → 说要求」，
+        此时图片在 Reply 组件的 chain 里而不在顶层消息链——不递归就会既取不到图，
+        又因图片数为 0 让子分类路由误判成文生类（如图生视频退化成文生视频）。
+        当前消息自带的图排在引用图之前（更贴近用户当下的意图），并按来源去重。
         """
         sources: list[str] = []
+
+        def collect(chain, depth: int = 0) -> None:
+            # ponytail: 深度上限 3 —— 引用套引用极少超过两层，够用且防成环
+            if depth > 3:
+                return
+            for comp in chain or []:
+                ctype = str(getattr(comp, "type", None) or "").lower()
+                if "reply" in ctype:  # 引用段：图片在被引用消息的 chain 里
+                    collect(getattr(comp, "chain", None), depth + 1)
+                    continue
+                if ctype not in ("image",):
+                    continue
+                cand = (
+                    getattr(comp, "url", None)
+                    or getattr(comp, "path", None)
+                    or getattr(comp, "file", None)
+                    or getattr(comp, "raw", None)
+                )
+                if not isinstance(cand, str) or not cand.strip():
+                    continue
+                c = cand.strip()
+                if c.startswith("file://"):
+                    c = c[len("file://"):]
+                if c and c not in sources:  # 去重：同图重复会被误判成多图任务
+                    sources.append(c)
+
         try:
             chain = getattr(event.message_obj, "message", None) or []
         except Exception:  # noqa: BLE001
             return sources
-        for comp in chain:
-            ctype = str(getattr(comp, "type", None) or "").lower()
-            if ctype not in ("image",):
-                continue
-            cand = (
-                getattr(comp, "url", None)
-                or getattr(comp, "path", None)
-                or getattr(comp, "file", None)
-                or getattr(comp, "raw", None)
-            )
-            if not isinstance(cand, str) or not cand.strip():
-                continue
-            c = cand.strip()
-            if c.startswith("file://"):
-                c = c[len("file://"):]
-            if c:
-                sources.append(c)
+        # 两轮：先收顶层图（当前意图优先），再收引用段里的图
+        collect([c for c in chain if "reply" not in str(getattr(c, "type", None) or "").lower()])
+        collect([c for c in chain if "reply" in str(getattr(c, "type", None) or "").lower()])
         return sources
 
     async def _materialize_images(self, sources: list[str]) -> list[dict]:
