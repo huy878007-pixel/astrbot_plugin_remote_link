@@ -4,7 +4,7 @@ display_name: 云信互联 Yunxin Interconnect
 short_desc: 云信互联：云端 AstrBot ↔ 本地电脑隧道，调用本地 ComfyUI 工作流、本地 LLM
 author: you
 version: v0.1.0
-repo: ""
+repo: "https://github.com/huy878007-pixel/astrbot_plugin_remote_link"
 tags:
   - comfyui
   - 本地模型
