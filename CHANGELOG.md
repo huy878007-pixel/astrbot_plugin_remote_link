@@ -1,11 +1,48 @@
 # 变更日志
 
+## v0.1.1（2026-08-21）— 提示词注入与产物送达修复
+
+一轮实战排查（群内真实使用暴露的 4 个连锁问题），全部附带可运行的回归检查。
+
+### 🐛 修复
+
+- **正/负提示词注入反转**（图上出现乱码文字水印、生成内容与需求无关）
+  根因：负框内容启发式 `NEG_LIKE_RE` 含 `nsfw`，而正面提示词框（尤其 NSFW 场景）本身就常含 `nsfw/explicit/naked` → 正面框被误判成负框 → 正负完全对调，负面词（`watermark/text/signature`）进了正面框，等于要求模型画出文字水印。
+  修复：`NEG_LIKE_RE` 去掉 `nsfw`，只认 `worst quality/bad anatomy` 等明确质量词。
+
+- **产物缓存跨子目录串图**（群里收到的图 ≠ 本地实际生成的图）
+  根因：ComfyUI 不同子目录（`Anima_v7` / `Anima_v10`）会产出同名文件（`%date%` 未替换时文件名固定），而云端 `_pull_media` 缓存只按 `Path(filename).name` 命名 → 先入缓存的旧图被同名新请求命中。
+  修复：缓存文件名加 `subfolder` 前缀，不同子目录的同名产物互不覆盖。
+
+- **生成请求被误判为「取历史产物」**（新任务直接回上次的旧图）
+  根因：取产物的自然语言分支跑在生成判定之前，且排除词表只有 `换/再来/重新…` 短名单 →「帮我生成一张图片」同时含产物词与「给/发」类动词被判成索取历史产物；同时生成判定要求「含产物词」，「生成一位…少女，手持一把枪械」这类无 `图/画` 字样的需求被漏判。
+  修复：取产物分支改为复用 `_is_direct_generation_command`（不再维护第二份关键词表）；生成判定去掉「含产物词」限制（@ 机器人 + 生成动词开头即为生成意图）。
+
+- **引用（回复）消息里的图片取不到**（图生视频退化成文生视频）
+  根因：群内常见用法是「先发一张图 → 引用它 → 说要求」，图片在 `Reply` 组件的 `chain` 里而不在顶层消息链；`_extract_event_images` 只遍历顶层 → 图片数为 0，`pick_subtype` 因此误判成文生类。
+  修复：递归 `Reply.chain`（当前消息的图优先、按来源去重、深度上限 3 层）；并在协议端 `get_msg` 失败、`chain` 为空时通过 `_fetch_reply_images` 用消息 ID 兜底补拉。
+
+- **`ROLE_HINTS_KEY` 被误判为缺失参数**（报「工作流中存在未提供的参数: YUNXIN_ROLE_HINTS」）
+  修复：`convert_ui_to_api` 改为返回 `(prompt, role_hints)` 元组，标签信息不再塞进工作流 dict，从根上避开占位符检查正则。
+
+### ✨ 新增
+
+- **提示词框节点标签**：在 ComfyUI 里把节点 Title 改成「正面提示词」/「负面提示词」（或含 `positive`/`negative`），插件 100% 按标签注入，不依赖内容猜测——不同工作流、不同节点 ID、空提示词框都准确。没打标签的工作流行为不变。
+- **`tools/tag_workflows.py` 自动打标工具**：本地跑一次即为 ComfyUI 所有工作流的正/负提示词节点打上标签；按内容自动区分，识别不了的列出待确认，打标前自动备份 `*.bak_tag`。
+
+### ✅ 回归检查
+
+- `test/test_gen_vs_fetch.py` — 11 条真实生成语料 + 4 条取产物语料的判定
+- `test/test_cache_subfolder.py` — v7/v10 同名产物不串、二次命中缓存
+- `test/test_reply_images.py` — 引用图提取、顺序、去重、`get_msg` 兜底、端到端子分类路由
+- 冒烟 `smoke_plugin` / `smoke_agent` 全过
+
 ## v0.1.0（2026-08-20）— 发布整理
 
 - 🐛 修复两处方法签名错误（发布冒烟测试发现）：`_extract_json` 缺少 `self`（提示词增强/路由解析必崩）；`_param_intent_detected` 误用 `@staticmethod` 却声明了 `self`（图片生成带参数时崩溃）
-- 📦 新增 `scripts/build_release.py` 一键打包脚本（插件 zip / 源码 zip / 本地代理目录）
-- 📦 插件根目录补充 `__init__.py` 兼容入口（AstrBot 4.x 以 metadata.yaml + main.py 加载，此为市场/加载器兼容）
+- 📦 新增 `scripts/build_release.py` 一键打包脚本（插件 zip / 源码 zip / 本地代理发行版 zip）
 - 🔧 本地 GUI「打开输出目录」不再硬编码机器路径，按配置的 `comfyui.userdata_dir` 自动推导
+- 📜 补齐开源协议合规：`THIRD-PARTY-NOTICES.md`（LiteGraph.js MIT 全文、依赖清单、pystray LGPL 说明），并补回 `litegraph.js/css` 被压缩掉的上游版权声明
 - ✅ 冒烟测试适配当前架构（智能调度/异步受理/指令校验），全部通过
 
 ## v0.1.0（2026-08-17）— 正式版

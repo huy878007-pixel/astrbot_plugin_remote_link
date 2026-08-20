@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RELEASE = ROOT / "release"
 RELEASE.mkdir(exist_ok=True)
 
-VERSION = "v0.1.0"
+VERSION = "v0.1.1"
 
 # ---- 插件 zip：只含云端 AstrBot 侧运行所需 ----
 PLUGIN_INCLUDE_TOP = {
