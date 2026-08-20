@@ -440,8 +440,11 @@ TEXT_NODE_RE = re.compile(r"Text|String|Multiline|Prompt", re.I)
 # Minimax 等音视频工作流：提示词通过 AudioConditioning 类节点的 prompt 输入传入
 TEXT_NODE_AUDIO_RE = re.compile(r"AudioConditioning", re.I)
 TEXT_INPUT_NAMES = ("text", "string", "value", "prompt", "multiline")
+# 负框内容启发式：只认"明确是负面质量词"的标记。
+# 注意：不能包含 nsfw/explicit/naked 等词——正面提示词（尤其 NSFW 场景）
+# 也可能含这些词，会把正面框误判成负框导致正负反转（图上出文字水印/怪物）。
 NEG_LIKE_RE = re.compile(
-    r"worst quality|low quality|bad anatomy|bad hands|extra fingers|watermark|lowres|jpeg artifacts|nsfw",
+    r"worst quality|low quality|bad anatomy|bad hands|extra fingers|watermark|lowres|jpeg artifacts",
     re.I,
 )
 POS_LIKE_RE = re.compile(
