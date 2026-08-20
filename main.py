@@ -1630,8 +1630,13 @@ class RemoteLinkPlugin(Star):
         filename = str(f.get("filename") or "")
         if not filename:
             return f
+        # 缓存 key 必须含 subfolder：不同子目录可能产出同名文件（如 Anima_v7 与
+        # Anima_v10 都有 精修完成_yyyy-MM-dd_00017_.png），只按文件名缓存会把
+        # 先到的 v7 图误当成 v10 的产物发出去（群里收到的和本地跑的不是同一张）。
+        subfolder = str(f.get("subfolder") or "")
         safe = Path(filename).name
-        path = self._media_dir / safe
+        cache_name = f"{subfolder.replace('/', '_')}__{safe}" if subfolder else safe
+        path = self._media_dir / cache_name
         if path.is_file():
             f["path"] = str(path)
             return f
@@ -2507,6 +2512,56 @@ class RemoteLinkPlugin(Star):
         collect([c for c in chain if "reply" in str(getattr(c, "type", None) or "").lower()])
         return sources
 
+    async def _fetch_reply_images(self, event) -> list[str]:
+        """兜底补拉引用消息里的图片：仅当消息里有引用段、但它的 chain 为空时才调用。
+
+        AstrBot 解析 reply 段时会调协议端 get_msg 去填充 Reply.chain；一旦这步失败
+        （日志里的「获取引用消息失败」/「(无法获取引用内容)」），Reply 就只剩一个 id，
+        图片彻底拿不到——群友「先发图 → 引用它 → 说要求」就会退化成文生类。
+        这里用同一个 id 自己再调一次 get_msg 把图捞回来。
+
+        ponytail: 只认 OneBot 的 image 段（url/file），够覆盖 QQ 侧；其它协议端
+        的自定义段留给上游 Reply.chain 正常路径处理。
+        """
+        try:
+            chain = getattr(event.message_obj, "message", None) or []
+        except Exception:  # noqa: BLE001
+            return []
+        # 只处理"有引用段但 chain 为空"的情况；chain 有内容时 _extract_event_images 已取到
+        ids = [
+            getattr(c, "id", None)
+            for c in chain
+            if "reply" in str(getattr(c, "type", None) or "").lower()
+            and not (getattr(c, "chain", None) or [])
+        ]
+        ids = [i for i in ids if i not in (None, "", 0)]
+        if not ids:
+            return []
+        bot = getattr(event, "bot", None)
+        if bot is None or not hasattr(bot, "call_action"):
+            return []
+        out: list[str] = []
+        for mid in ids[:2]:  # 最多补拉 2 条引用，避免刷 API
+            try:
+                data = await bot.call_action(action="get_msg", message_id=int(mid))
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[remote_link] 补拉引用消息 {mid} 失败: {e}")
+                continue
+            for seg in (data or {}).get("message") or []:
+                if not isinstance(seg, dict) or str(seg.get("type") or "").lower() != "image":
+                    continue
+                d = seg.get("data") or {}
+                cand = d.get("url") or d.get("file") or d.get("path")
+                if isinstance(cand, str) and cand.strip():
+                    c = cand.strip()
+                    if c.startswith("file://"):
+                        c = c[len("file://"):]
+                    if c not in out:
+                        out.append(c)
+        if out:
+            logger.info(f"[remote_link] 引用消息 chain 为空，已通过 get_msg 补拉 {len(out)} 张图")
+        return out
+
     async def _materialize_images(self, sources: list[str]) -> list[dict]:
         """把图片来源（URL / 本地路径）下载/读取为【服务器本地文件】，返回 [{path, base64, name}]。
 
@@ -2705,6 +2760,8 @@ class RemoteLinkPlugin(Star):
             image_sources = list(image_urls or [])
             if event is not None:
                 image_sources = image_sources + self._extract_event_images(event)
+                if not image_sources:  # 引用段 chain 为空时兜底补拉（NapCat get_msg 失败场景）
+                    image_sources = image_sources + await self._fetch_reply_images(event)
             # 图片一律落盘为本地文件（识图传路径、注入传 base64，不用 URL 中转）
             if pre_images is not None:
                 images = list(pre_images)
@@ -2925,6 +2982,8 @@ class RemoteLinkPlugin(Star):
         image_sources = list(image_urls or [])
         if event is not None:
             image_sources = image_sources + self._extract_event_images(event)
+            if not image_sources:  # 引用段 chain 为空时兜底补拉（NapCat get_msg 失败场景）
+                image_sources = image_sources + await self._fetch_reply_images(event)
         # 图片一律落盘为本地文件（务实：不用 URL 中转，识图传路径、注入传 base64）
         if pre_images is not None:
             images = list(pre_images)

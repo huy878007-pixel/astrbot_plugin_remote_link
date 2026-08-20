@@ -74,4 +74,56 @@ assert pick_subtype("video", n2, "转场视频") == "multi_image2video", "两张
 n0 = len(extract([Plain("生成星空延时视频")]))
 assert n0 == 0 and pick_subtype("video", n0, "生成星空延时视频") == "text2video"
 
+# ---- 兜底：Reply.chain 为空（AstrBot 的 get_msg 失败）时，插件自己补拉 ----
+# 现实场景：日志出现「获取引用消息失败」/「(无法获取引用内容)」，
+# 此时 Reply 只有 id，chain 为空 —— 必须靠 event.bot.get_msg 补一次，否则图永远取不到。
+import asyncio  # noqa: E402
+
+
+class _FakeBot:
+    """模拟 aiocqhttp 客户端：get_msg 返回 OneBot 风格的消息段。"""
+
+    def __init__(self, segments):
+        self.segments = segments
+        self.calls = []
+
+    async def call_action(self, action, **kw):
+        self.calls.append((action, kw))
+        if action != "get_msg":
+            raise RuntimeError(f"unexpected action {action}")
+        return {"message": self.segments}
+
+
+class _EventWithBot(_Event):
+    def __init__(self, chain, bot, text=""):
+        super().__init__(chain, text)
+        self.bot = bot
+
+
+def fetch(chain, bot):
+    plugin = RemoteLinkPlugin.__new__(RemoteLinkPlugin)
+    ev = _EventWithBot(chain, bot)
+    got = RemoteLinkPlugin._extract_event_images(plugin, ev)
+    extra = asyncio.run(RemoteLinkPlugin._fetch_reply_images(plugin, ev))
+    return got, extra
+
+
+REMOTE = "http://example.com/quoted.jpg"
+bot = _FakeBot([{"type": "image", "data": {"url": REMOTE}}])
+got, extra = fetch([Reply(id=777, chain=[]), Plain("用这张图做成视频")], bot)
+assert got == [], f"chain 为空时同步提取应为空，实际 {got}"
+assert extra == [REMOTE], f"应通过 get_msg 补拉到图，实际 {extra}"
+assert bot.calls and bot.calls[0][0] == "get_msg", "应调用 get_msg 补拉"
+
+# chain 已有图时不该重复补拉（省一次 API 调用）
+bot2 = _FakeBot([{"type": "image", "data": {"url": REMOTE}}])
+got2, extra2 = fetch([Reply(id=778, chain=[Image.fromURL(URL)])], bot2)
+assert got2 == [URL] and extra2 == [], "chain 有图时不应再补拉"
+assert not bot2.calls, "chain 有图时不该调用 get_msg"
+
+# 没有引用段 → 不调用 get_msg
+bot3 = _FakeBot([])
+got3, extra3 = fetch([Plain("画只猫")], bot3)
+assert got3 == [] and extra3 == [] and not bot3.calls, "无引用段不该调 get_msg"
+
 print("REPLY IMAGE EXTRACT PASS")
