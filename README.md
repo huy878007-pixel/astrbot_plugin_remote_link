@@ -33,13 +33,267 @@
 
 | | | |
 | --- | --- | --- |
-| [✨ 能力总览](#-能力总览) | [🧭 架构与职责](#-架构与职责) | [🚀 三步跑起来](#-三步跑起来) |
-| [🖼️ 界面一览](#️-界面一览) | [☁️ 云端：装插件](#️-云端装插件) | [🖥️ 本地：跑代理](#️-本地跑代理) |
-| [🎮 使用方式详解](#-使用方式详解) | [🧠 内生调度流水线](#-内生调度流水线) | [🎨 ComfyUI 对接详解](#-comfyui-对接详解) |
-| [🤖 本地 LLM 详解](#-本地-llm-详解) | [⚙️ 配置详解](#️-配置详解) | [🩹 故障排查大全](#-故障排查大全) |
-| [🔒 安全加固](#-安全加固) | [📦 发布与开发](#-发布与开发) | [📜 许可与致谢](#-许可与致谢) |
+| [🚀 从零安装（保姆级）](#-从零安装保姆级) | [✨ 能力总览](#-能力总览) | [🧭 架构与职责](#-架构与职责) |
+| [🖼️ 界面一览](#️-界面一览) | [🎮 使用方式详解](#-使用方式详解) | [🧠 内生调度流水线](#-内生调度流水线) |
+| [🎨 ComfyUI 对接详解](#-comfyui-对接详解) | [🤖 本地 LLM 详解](#-本地-llm-详解) | [⚙️ 配置详解](#️-配置详解) |
+| [🩹 故障排查大全](#-故障排查大全) | [🔒 安全加固](#-安全加固) | [📦 发布与开发](#-发布与开发) |
+| [📜 开源协议](#-开源协议) | [💚 致谢](#-致谢) | |
 
 ---
+## 🚀 从零安装（保姆级）
+
+> 跟着走一遍，10 分钟内让群里能画出第一张图。整个过程分**云端、本地、验证、进阶**四步，每步都有「怎么判断对不对」。
+
+```mermaid
+flowchart LR
+    A["① 云端装插件<br/>填 auth_token<br/>放行 8468"] --> B["② 本地跑 exe<br/>填服务器地址<br/>+ 同一个 token"] --> C["③ 群里发 /remote status<br/>看到本机名和显存"] --> D["④ 说人话<br/>「画只猫」<br/>图自动飞回群"]
+```
+
+---
+
+### 第一步：云端装插件（3 分钟）
+
+> 目标：让云服务器上的 AstrBot 里出现「云信互联」插件，并拿到一串**共享密钥**。
+
+#### 1.1 下载插件包
+
+[![下载插件](https://img.shields.io/badge/⬇%20下载云端插件-yunxin--plugin--v0.1.1.zip-3a6a4a?style=flat-square)](https://github.com/huy878007-pixel/astrbot_plugin_remote_link/releases/latest/download/yunxin-plugin-v0.1.1.zip)
+
+最新版永远在 [Releases](https://github.com/huy878007-pixel/astrbot_plugin_remote_link/releases/latest) 页，文件是 `yunxin-plugin-v0.1.1.zip`。
+
+#### 1.2 装进 AstrBot（三选一）
+
+**方式 A：WebUI 上传（最推荐，最省事）**
+
+1. 打开 AstrBot WebUI（默认 `http://你的服务器IP:6185`），登录
+2. 左侧「插件」→「已安装」→ 点「**上传插件**」按钮
+3. 选中刚下载的 `yunxin-plugin-v0.1.1.zip` → 等待安装完成
+4. 在插件列表里能看到「**云信互联 Yunxin Interconnect**」= 成功
+
+**方式 B：直接放进插件目录**
+
+```bash
+# 进入 AstrBot 数据目录（Docker 部署的话是挂载出来的那个 data 卷）
+cd AstrBot/data/plugins
+# 方式 B1：git 拉取（能随时 git pull 更新）
+git clone https://github.com/huy878007-pixel/astrbot_plugin_remote_link.git
+# 方式 B2：解压 zip
+unzip yunxin-plugin-v0.1.1.zip -d astrbot_plugin_remote_link
+```
+
+然后重启 AstrBot，或在 WebUI 里点「重载插件」。
+
+**方式 C：Docker 部署（容器方式）**
+
+如果你用 Docker 跑 AstrBot，插件装进容器后，**必须**额外做端口映射：
+
+```bash
+docker run -d \
+  -p 6185:6185 \      # AstrBot 面板端口
+  -p 8468:8468 \      # ← 云信互联隧道端口，漏了这个本地连不上！
+  -v /你的路径/AstrBot/data:/AstrBot/data \
+  astrbot/astrbot
+```
+
+#### 1.3 配置插件（关键：拿到共享密钥）
+
+1. WebUI → 插件 → 「云信互联」→ 点进配置页
+2. 找到 `auth_token`（认证令牌 / 共享密钥）这一项
+3. **填一段够长的随机串**，例如用下面命令生成：
+
+   ```bash
+   openssl rand -hex 32
+   # 例：6bcc23c0f054702ecee1a7ca6beec383...  ← 复制这一整串
+   ```
+
+4. **把这串密钥记下来**，第二步本地要用**完全一样**的
+5. 其余配置项先保持默认，保存
+
+#### 1.4 放行端口（云服务器必须做！）
+
+本地代理要主动连到云服务器的 `8468` 端口，所以：
+
+- **云服务器安全组 / 防火墙**：放行 **TCP 8468**（入方向）
+- **宝塔/1Panel 等面板**：在防火墙/安全里放行 8468
+- **Docker 部署**：确认容器映射了 `8468`（见 1.2 方式 C）
+
+> ✅ **怎么判断这一步对了**：插件配置页保存后，插件状态是「已启用/运行中」，且日志里没有「端口绑定失败」。
+
+---
+
+### 第二步：本地跑代理（2 分钟）
+
+> 目标：让你家那台有显卡的电脑（Windows）跑起 `YunxinAgent`，并连上云端。
+
+#### 2.1 下载本地代理（免装 Python）
+
+[![下载本地端](https://img.shields.io/badge/⬇%20下载本地代理-YunxinAgent--v0.1.1--win64.zip-2f6da0?style=flat-square)](https://github.com/huy878007-pixel/astrbot_plugin_remote_link/releases/latest/download/YunxinAgent-v0.1.1-win64.zip)
+
+这是打包好的 Windows 可执行程序，**不需要装 Python**。解压到任意目录（如 `D:\YunxinAgent\`）。
+
+#### 2.2 启动并填配置
+
+1. 双击 `YunxinAgent.exe` —— 没有黑窗口，直接弹出深色界面（首次会自动生成 `agent_config.json`）
+2. 切到「**配置**」页，填三样：
+   - **云端地址 `server_url`**：`ws://你的云服务器IP:8468/ws`
+   - **共享密钥 `token`**：与第一步的 `auth_token` **完全一致**（一个字符都不能差）
+   - **ComfyUI 的 user 目录 `userdata_dir`**：填你 ComfyUI 安装目录下的 `user` 文件夹，如 `D:/ComfyUI/user`
+3. 点「**💾 保存并重启代理**」
+4. 看左上角状态点：变绿 **●已连接** = 成功
+
+#### 2.3 配置文件长这样（手动改也行）
+
+```json
+{
+  "server_url": "ws://你的云服务器IP:8468/ws",
+  "token": "与云端 auth_token 完全一致",
+  "reconnect_seconds": 5,
+  "request_timeout": 600,
+  "dashboard_host": "127.0.0.1",
+  "dashboard_port": 8899,
+  "comfyui": {
+    "base_url": "http://127.0.0.1:8188",
+    "timeout": 3600,
+    "userdata_dir": "D:/ComfyUI/user",
+    "default_checkpoint": "",
+    "default_workflow_file": ""
+  },
+  "openai": { "base_url": "http://127.0.0.1:11434/v1", "api_key": "", "timeout": 300 },
+  "shell": { "enabled": false, "timeout": 60 }
+}
+```
+
+| 字段 | 说明 | 常见坑 |
+| --- | --- | --- |
+| `server_url` | 云端地址；用了 Nginx 反代就写 `wss://你的域名/ws` | 忘了加 `/ws` 后缀 |
+| `token` | 与插件 `auth_token` 一致 | **不一致就连不上，第一大坑** |
+| `comfyui.userdata_dir` | ComfyUI 的 **`user` 文件夹**（不是根目录） | 填错 → 工作流列表为空 |
+| `comfyui.base_url` | 本地 ComfyUI 地址 | 默认 `http://127.0.0.1:8188` |
+| `comfyui.timeout` | 单次执行超时（秒） | 视频工作流要给 1800+ |
+| `comfyui.default_checkpoint` | `__CHECKPOINT__` 占位符留空时的默认模型 | 报「模型不存在」时看这个 |
+| `openai.base_url` | 本地 LLM 地址 | Ollama `http://127.0.0.1:11434/v1`；LM Studio `http://127.0.0.1:1234/v1` |
+| `dashboard_port` | 本地看板端口 | `0` = 关闭看板 |
+| `shell.enabled` | Shell 总开关（危险能力） | 与云端 `enable_shell` 是「与」关系，双开才生效 |
+
+> ✅ **怎么判断这一步对了**：状态点变绿「●已连接」；浏览器打开 `http://127.0.0.1:8899` 能看到本地看板，里面有「已连接云端插件，等待请求」。
+
+#### 2.4 源码运行（Linux/macOS 或想自己改代码）
+
+```bash
+git clone https://github.com/huy878007-pixel/astrbot_plugin_remote_link.git
+cd astrbot_plugin_remote_link
+pip install aiohttp                                  # 纯命令行模式
+pip install ttkbootstrap pystray pillow psutil       # 需要桌面 GUI 再装
+python agent/local_agent.py                          # 命令行前台运行
+python agent/gui.py                                  # 桌面 GUI
+```
+
+看到 `已连接云端插件，等待请求…` 就成功了。**ComfyUI / Ollama 要自己先启动**（代理不会帮你拉起它们）。
+
+#### 2.5 让它开机常驻
+
+- **GUI 自带**：点窗口右上角 ✕ 会最小化到系统托盘（代理继续跑，不会退出）；设置页可开「开机自启」
+- **任务计划程序**：新建任务 → 触发器「当计算机启动时」→ 操作填 `YunxinAgent.exe` 完整路径
+- **nssm**：`nssm install YunxinAgent "C:\path\to\YunxinAgent.exe"`
+
+> [!WARNING]
+> **同一时刻只能跑一个本地代理**：新连接会顶掉旧连接，而且第二个实例会因看板端口 8899 被占用而报错。
+> 装了开机自启之后又手动双击一次，就会撞上这个 —— 先去任务管理器结束多余的 `YunxinAgent.exe` 喵。
+
+---
+
+### 第三步：验证跑通（1 分钟）
+
+> 目标：确认云端 ↔ 本地隧道真的通了。
+
+1. 在群里发一句指令：
+
+   ```
+   /remote status
+   ```
+
+2. 看机器人回复：
+   - ✅ **有本机名 + 显存大小 + ComfyUI 在线** = 全通，进入第四步
+   - ❌ **「本地代理未连接」** = 隧道没通，回第二步查 token / 地址 / 端口
+
+3. 再发一句测试生成（直接说人话就行，不用记指令）：
+
+   ```
+   画一只赛博朋克的猫，霓虹夜景
+   ```
+
+   机器人先回「✅ 已收到，正在本地生成…」，过一会儿图自动飞回群里 = **整个链路跑通了！**
+
+> [!TIP]
+> 到这里还没反应？看 [🩹 故障排查大全](#-故障排查大全) 的 **A 类（连接）** —— 99% 是 token 不一致或端口没放行喵 ╮(╯_╰)╭
+
+---
+
+### 第四步（强烈推荐）：给工作流打标签
+
+> 目标：让你本地 ComfyUI 的每个工作流，正/负提示词框被准确识别，**彻底避免「正负反转 → 图上出乱码文字」**。
+
+**为什么要做**：插件默认按「内容像不像负面词」来猜正/负提示词框，大多数情况对，但遇到空框、中文负词、或正面框里含 `nsfw` 这类词时会猜错 → 生成怪图。给节点打个标签，插件 100% 按标签注入，一劳永逸。
+
+**两种方式，任选其一：**
+
+**方式 A：自动打标（最省事，推荐）**
+
+项目自带一个脚本，本地跑一次，自动给所有工作流打标签：
+
+```bash
+# 在项目目录里（源码运行）或下载源码包解压后
+python tools/tag_workflows.py                     # 自动探测 ComfyUI user 目录
+python tools/tag_workflows.py --dir D:/ComfyUI/user   # 或手动指定目录
+python tools/tag_workflows.py --dry-run           # 先预览会改哪些，不实际改
+```
+
+它会：
+- 扫描 ComfyUI 里**所有**工作流的正/负提示词节点
+- 自动按内容区分并打上 title 标签
+- 识别不了的列出来让你手动确认
+- 打标前自动备份 `*.bak_tag`（改错了能回退）
+
+**方式 B：手动打标（2 分钟）**
+
+在 ComfyUI 网页里：
+1. 打开一个工作流
+2. 右键「正面提示词」的 `CLIPTextEncode` 节点 → **Title** → 改成 `正面提示词`
+3. 右键「负面提示词」的节点 → **Title** → 改成 `负面提示词`
+4. 保存工作流
+
+> 不用每个工作流都做 —— 只给**你会通过插件生成**的那些工作流打标即可。没打标的工作流照样能用，只是走自动识别。
+
+---
+
+### 第五步（可选）：把本地 LLM 配成 AstrBot 大脑
+
+> 目标：让 AstrBot 的所有对话都跑在你本地模型上（省云端 API 费）。
+
+1. WebUI → 服务提供商 → 添加 → 选 **OpenAI 兼容接口**
+2. `base_url` 填 `http://127.0.0.1:8468/v1`（插件监听地址）
+3. `api_key` 填插件的 `auth_token`
+4. 模型名填你本地真实存在的名字（Ollama 如 `qwen2.5:14b`）
+
+之后 AstrBot 的对话就都走隧道到你本地推理了。详见 [🤖 本地 LLM 详解](#-本地-llm-详解)。
+
+---
+
+### 安装常见问题速查
+
+| 现象 | 最可能原因 | 解决 |
+| --- | --- | --- |
+| 本地一直「未连接」 | token 不一致 | 两端 `auth_token`/`token` 逐字符核对 |
+| 本地一直「未连接」 | 端口 8468 没放行 | 云服务器安全组放行 TCP 8468 |
+| 本地能连，但工作流列表空 | `userdata_dir` 填错 | 填 ComfyUI 的 `user` 文件夹（不是根目录） |
+| Docker 部署连不上 | 没映射 8468 | 加 `-p 8468:8468`，`server_host` 填 `0.0.0.0` |
+| 生成出来是怪图/带乱码文字 | 正负提示词反转 | 跑第四步打标签 |
+| 第二个代理起不来 | 已有实例在跑 | 任务管理器结束多余 `YunxinAgent.exe` |
+
+完整排查看 [🩹 故障排查大全](#-故障排查大全)。
+
+---
+
 
 ## ✨ 能力总览
 
@@ -177,48 +431,6 @@ flowchart LR
 
 ---
 
-## 🚀 三步跑起来
-
-```mermaid
-flowchart LR
-    S1["① 云端装插件<br/>填 auth_token<br/>放行 8468"] --> S2["② 本地跑 exe<br/>填服务器地址<br/>+ 同一个 token"] --> S3["③ 群里说话<br/>「画只猫」<br/>图自动飞回来"]
-```
-
-### ① 云端（3 分钟）
-
-1. [下载 `yunxin-plugin-v0.1.1.zip`](https://github.com/huy878007-pixel/astrbot_plugin_remote_link/releases/latest)
-2. AstrBot WebUI → 插件 → 已安装 → **上传插件** → 选中 zip
-3. 装好后进插件配置，填一段随机 `auth_token`（`openssl rand -hex 32` 生成）
-4. 云服务器安全组/防火墙**放行 TCP 8468**；Docker 部署再加 `-p 8468:8468`
-
-### ② 本地（2 分钟）
-
-1. [下载 `YunxinAgent-v0.1.1-win64.zip`](https://github.com/huy878007-pixel/astrbot_plugin_remote_link/releases/latest/download/YunxinAgent-v0.1.1-win64.zip) 解压到任意目录
-2. 双击 `YunxinAgent.exe`（首次运行自动生成配置并打开界面）
-3. 配置页填三样：
-   - **云端地址**：`ws://你的服务器IP:8468/ws`
-   - **共享密钥**：与云端 `auth_token` **完全一致**
-   - **ComfyUI 的 user 目录**：如 `D:/ComfyUI/user`
-4. 点「💾 保存并重启代理」，状态灯变绿 **●已连接**
-
-### ③ 用起来
-
-群里发 `/remote status` 看到本机名和显存 = 通了。之后**直接说人话**：
-
-```
-画一只赛博朋克的猫，霓虹夜景
-把这张图改成雨天              （消息里附带图片）
-用这两张图做一段转场视频
-生成 5 秒的星空延时视频
-再来一张                      （接着上次的需求重新生成）
-把视频发给我                  （补发历史产物）
-用我本地的模型解释一下什么是熵
-```
-
-> [!TIP]
-> 三步都做完但群里没反应？先看 [🩹 故障排查大全](#-故障排查大全) 的 **A 类（连接）** —— 99% 是 token 不一致或端口没放行喵 ╮(╯_╰)╭
-
----
 
 ## 🖼️ 界面一览
 
@@ -250,114 +462,6 @@ flowchart LR
 
 ---
 
-## ☁️ 云端：装插件
-
-### 方式 A：WebUI 上传（推荐）
-
-1. [下载 `yunxin-plugin-v0.1.1.zip`](https://github.com/huy878007-pixel/astrbot_plugin_remote_link/releases/latest)
-2. AstrBot WebUI → 插件 → 已安装 → **上传插件**
-3. 装好后重载插件
-
-### 方式 B：放进插件目录
-
-```bash
-cd AstrBot/data/plugins
-git clone https://github.com/huy878007-pixel/astrbot_plugin_remote_link.git
-# 或解压 zip 进来
-```
-
-重启 AstrBot 或在 WebUI 里重载插件。
-
-### 必填配置
-
-WebUI → 插件 → 云信互联 → 配置：
-
-| 配置项 | 说明 | 建议值 |
-| --- | --- | --- |
-| `auth_token` | **隧道共享密钥**，本地代理必须填一样的；同时也是 OpenAI 代理的 API Key | `openssl rand -hex 32` 生成的随机串 |
-| `server_host` | 监听地址 | `0.0.0.0`（Docker 部署**必须**） |
-| `server_port` | 监听端口 | `8468`（避开 AstrBot 面板 6185） |
-| `router_provider` | 智能调度与提示词增强用的 LLM | 留空 = 跟随当前会话提供商；也可指定 |
-| `llm_model` | 本地 LLM 默认模型名 | **Ollama 用户必填**，如 `qwen2.5:14b` |
-| `nsfw_enabled` | 成人内容开关 | `false`（关闭时强制 SFW 并自动加屏蔽负词） |
-
-### 放行端口 ⚠️
-
-- **云服务器安全组 / 防火墙**：放行 TCP `8468`
-- **Docker 部署**：`-p 8468:8468`，且 `server_host` 必须 `0.0.0.0`
-- **想上 TLS**：Nginx 反代成 `wss://`，见 [🔒 安全加固](#-安全加固)
-
----
-
-## 🖥️ 本地：跑代理
-
-### 免装环境：下载 exe（推荐）
-
-[![下载](https://img.shields.io/badge/⬇%20YunxinAgent-Windows%20x64-2f6da0?style=flat-square)](https://github.com/huy878007-pixel/astrbot_plugin_remote_link/releases/latest/download/YunxinAgent-v0.1.1-win64.zip)
-
-1. 解压到任意目录（如 `D:\YunxinAgent\`）
-2. 双击 `YunxinAgent.exe` —— 没有黑窗口，直接开深色界面，首次运行自动生成配置
-3. 配置页填三样：**云端地址**、**token**、**ComfyUI 的 user 目录**
-4. 点「💾 保存并重启代理」，状态灯变 ●已连接
-
-配置文件长这样（`agent_config.json`，也可以手动改）：
-
-```json
-{
-  "server_url": "ws://你的云服务器IP:8468/ws",
-  "token": "与云端插件 auth_token 完全一致",
-  "reconnect_seconds": 5,
-  "request_timeout": 600,
-  "dashboard_host": "127.0.0.1",
-  "dashboard_port": 8899,
-  "comfyui": {
-    "base_url": "http://127.0.0.1:8188",
-    "timeout": 3600,
-    "userdata_dir": "D:/ComfyUI/user",
-    "default_checkpoint": "",
-    "default_workflow_file": ""
-  },
-  "openai": { "base_url": "http://127.0.0.1:11434/v1", "api_key": "", "timeout": 300 },
-  "shell": { "enabled": false, "timeout": 60 }
-}
-```
-
-| 字段 | 说明 |
-| --- | --- |
-| `server_url` | 云端地址；用了反代写 `wss://你的域名/ws` |
-| `token` | 与插件 `auth_token` 一致 —— **不一致就连不上，这是第一大坑** |
-| `comfyui.userdata_dir` | ComfyUI 目录下的 **`user` 文件夹**；不填则工作流列表为空（指向 `user` 或 `user/default/workflows` 都兼容） |
-| `comfyui.base_url` | 本地 ComfyUI，默认 `http://127.0.0.1:8188` |
-| `comfyui.timeout` | 单次工作流执行超时（秒），视频类给足 |
-| `comfyui.default_checkpoint` | `__CHECKPOINT__` 占位符留空时用的默认模型 |
-| `openai.base_url` | Ollama `http://127.0.0.1:11434/v1`；LM Studio `http://127.0.0.1:1234/v1` |
-| `dashboard_port` | 本地看板端口，`0` = 关闭 |
-| `shell.enabled` | Shell 总开关（与云端 `enable_shell` 是**与**关系） |
-
-### 源码运行（Linux/macOS 或想改代码）
-
-```bash
-git clone https://github.com/huy878007-pixel/astrbot_plugin_remote_link.git
-cd astrbot_plugin_remote_link
-pip install aiohttp                      # 纯命令行模式
-pip install ttkbootstrap pystray pillow psutil   # 需要桌面 GUI 再装
-python agent/local_agent.py              # 命令行前台运行
-python agent/gui.py                      # 桌面 GUI
-```
-
-看到 `已连接云端插件，等待请求…` 就成功了。**ComfyUI / Ollama 需自己先启动**（代理不会帮你拉起它们）。
-
-### 让它常驻
-
-- **GUI 自带**：点 ✕ 最小化到系统托盘，代理继续跑；设置页可开「开机自启」（直接进托盘）
-- **任务计划程序**：触发器「当计算机启动时」→ 程序填 `YunxinAgent.exe` 完整路径
-- **nssm**：`nssm install YunxinAgent "C:\path\to\YunxinAgent.exe"`
-
-> [!WARNING]
-> **同一时刻只能跑一个本地代理**：新连接会顶掉旧连接，而且第二个实例会因看板端口 8899 被占用而报错。
-> 装了开机自启之后又手动双击，就会撞上这个 —— 先去任务管理器结束多余的 `YunxinAgent.exe` 喵。
-
----
 
 ## 🎮 使用方式详解
 
