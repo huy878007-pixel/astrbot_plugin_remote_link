@@ -49,6 +49,15 @@ from .core.exceptions import RemoteLinkError
 from .core.protocol import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
 from .core.task_manager import TaskManager
 from .core.tunnel import TunnelServer
+from .routing.classifier import DEFAULT_ROUTER_PROMPT, extract_json, param_intent_detected
+from .routing.prompt_enhancer import CJK_RE, DEFAULT_ENHANCE_PROMPT, retranslate_tags
+from .routing.subtype import (
+    SUBTYPE_CATEGORY,
+    SUBTYPE_HINTS,
+    SUBTYPE_LABELS,
+    SUBTYPES,
+    pick_subtype,
+)
 from .services.media import MediaService
 from .tools.local_llm import build_llm_tool
 from .tools.shell import build_shell_tool
@@ -124,56 +133,6 @@ DEFAULT_NEGATIVE = (
     "lowres, jpeg artifacts."
 )
 
-# 中文检测（提示词增强输出校验：扩散模型更吃英文 tag）
-CJK_RE = re.compile(r"[\u4e00-\u9fff]")
-
-# ---------------- 子分类体系（v0.1.0 配置表驱动） ----------------
-SUBTYPES = [
-    "text2image", "image2image", "prompt_analysis",
-    "text2video", "image2video", "multi_image2video",
-    "audio_gen",
-]
-SUBTYPE_LABELS = {
-    "text2image": "文生图", "image2image": "图生图", "prompt_analysis": "画面分析提示词",
-    "text2video": "文生视频", "image2video": "单图生视频", "multi_image2video": "多图生视频",
-    "audio_gen": "音频生成",
-}
-SUBTYPE_CATEGORY = {
-    "text2image": "image", "image2image": "image", "prompt_analysis": "image",
-    "text2video": "video", "image2video": "video", "multi_image2video": "video",
-    "audio_gen": "audio",
-}
-SUBTYPE_HINTS = {
-    "text2image": ("文生图", "文转图", "text2image"),
-    "image2image": ("图生图", "改图", "重绘", "image2image"),
-    "prompt_analysis": ("画面分析", "提示词分析", "反推提示词", "prompt analysis"),
-    "text2video": ("文生视频", "文转视频", "text2video"),
-    "image2video": ("单图生视频", "图生视频", "image2video"),
-    "multi_image2video": ("多图生视频", "multi_image2video", "多图视频"),
-    "audio_gen": ("音频生成", "配乐", "音效", "audio_gen"),
-}
-
-# 智能调度的默认决策提示词（一级分类：只判断任务类型，不选工作流、不写提示词；
-# 工作流由默认配置决定，提示词由第二级"提示词增强"LLM 生成。可在设置页自定义覆盖）
-DEFAULT_ROUTER_PROMPT = """你是云信互联的任务分类器。根据用户意图判断任务类型（不要选具体工作流，也不要写提示词）。
-只输出一个 JSON 对象，不要输出任何其他文字。格式：
-{"kind":"image|video|audio|text","explanation":"一句话理由"}
-规则：
-1. 画图/生成图片/照片/插画/头像/壁纸/表情包等视觉图像任务 → image；
-2. 生成视频/动画/短片/动态图等任务 → video；
-3. 生成音乐/音频/歌曲/配音/音效等任务 → audio；
-4. 问答/解释/翻译/总结/写作/计算等纯文本任务 → text；
-5. 拿不准时选最接近的一类，并在 explanation 说明理由。"""
-
-# 提示词增强的默认模板（{policy} 会被替换成 NSFW 策略说明；可在设置页自定义覆盖）
-DEFAULT_ENHANCE_PROMPT = """你是 Stable Diffusion 生图提示词翻译器。把用户的自然语言描述改写成英文 tag 提示词。
-只输出一个 JSON 对象，不要输出任何其他文字，格式：
-{"positive":"英文正面提示词","negative":"英文负面提示词"}
-硬性规则：
-1. {policy}
-2. positive 必须是【纯英文 tag】、逗号分隔，绝对禁止中文/日文或任何非英文字符；先写风格质量词（masterpiece, best quality, highly detailed, anime illustration），再把用户描述的全部要素翻译成英文 tag（主体/发色/瞳色/服装/表情/动作/场景/背景/光影/构图/镜头）；
-3. negative 必须是【纯英文 tag】、逗号分隔，包含质量类负面词（worst quality, low quality, bad anatomy, bad hands, extra fingers, watermark, text, lowres, jpeg artifacts），再根据画面内容补充针对性负面词；
-4. 违反英文要求的输出视为失败。"""
 
 # 工作流识别的默认分析提示词（初始化按钮用：LLM 给每个工作流打标签分类）
 DEFAULT_ANALYZE_PROMPT = """你是 ComfyUI 工作流分析专家。根据每个工作流的节点组成、产物类型、参数和入口，判断它用来干什么。
@@ -185,31 +144,6 @@ DEFAULT_ANALYZE_PROMPT = """你是 ComfyUI 工作流分析专家。根据每个�
 3. 产物含 audio → category=audio，subtype=音频；
 4. 都没有产物 → category=other，subtype 按节点判断（文本/其他）；
 5. summary 用中文一句话说清楚它生成什么；tags 给 3~6 个概括用途的中文标签（如 动漫、写实、放大、修复、风格转绘）。"""
-
-
-def pick_subtype(kind: str, n_images: int, intent: str) -> str:
-    """子分类规则（纯函数）：手动关键词 > 图数规则（带图→图生类，多图→多图生视频）。
-
-    手动关键词取"最长（最具体）"命中，避免「多图生视频」被「图生视频」抢先。
-    """
-    best = ("", 0)
-    for st in SUBTYPES:
-        for h in SUBTYPE_HINTS.get(st, ()):
-            if h and h in intent and len(h) > best[1]:
-                best = (st, len(h))
-    if best[0]:
-        return best[0]
-    if kind == "image":
-        return "image2image" if n_images > 0 else "text2image"
-    if kind == "video":
-        if n_images > 1:
-            return "multi_image2video"
-        if n_images == 1:
-            return "image2video"
-        return "text2video"
-    if kind == "audio":
-        return "audio_gen"
-    return ""
 
 
 class RemoteLinkPlugin(Star):
@@ -1803,51 +1737,13 @@ class RemoteLinkPlugin(Star):
         return str(data.get("kind") or "").strip()
 
     def _param_intent_detected(self, intent: str) -> bool:
-        """判断用户输入是否【明确提到】生成参数（分辨率/步数/CFG/采样器/种子/宽高比等）。
-
-        只有明确提到参数时才启用 Anima 参数适配段（并供后续参数提取/注入使用）；
-        未提到 → 返回 False，工作流完全用默认参数。
-        """
-        t = (intent or "").lower()
-        patterns = (
-            r"\d{3,4}\s*[x×*]\s*\d{3,4}",   # 1920×1080
-            r"\d+\s*:\s*\d+",                # 9:16 宽高比
-            r"步\s*数|迭代|steps|step",
-            r"\bcfg\b|引导|指引",
-            r"采样|sampler|调度|scheduler",
-            r"种子|seed",
-            r"分辨|尺寸|像素|resolution|宽高比|比例|aspect",
-            r"\d+(?:\.\d+)?\s*p\b|4k|2k|8k|1080p|720p|高清|超清",
-        )
-        return any(re.search(p, t, re.I) for p in patterns)
+        """判断用户输入是否【明确提到】生成参数（纯函数，见 routing/classifier.py）。"""
+        return param_intent_detected(intent)
 
     def _extract_json(self, text: str) -> dict | None:
-        """从 LLM 输出里提取第一个合法 JSON 对象（dict）。
+        """从 LLM 输出里提取第一个合法 JSON 对象（纯函数，见 routing/classifier.py）。"""
+        return extract_json(text)
 
-        先尝试整体解析；失败则用「不含嵌套花括号」的正则找出所有 {..} 候选，
-        【从后往前】逐个尝试——LLM 通常把实际 JSON 放在最后输出，前面可能是
-        复述 system prompt / 解释 / 模板示例（此前用贪婪的 {.*} 正则会把它们一起
-        抓进来导致解析失败、进而把整段输出当成提示词，混入模板内容）。扁平 JSON
-        （{"positive":"...","negative":"..."}）恰好没有嵌套花括号，适配此正则。
-        """
-        text = (text or "").strip()
-        if not text:
-            return None
-        try:
-            d = json.loads(text)
-            if isinstance(d, dict):
-                return d
-        except Exception:  # noqa: BLE001
-            pass
-        candidates = [m.group(0) for m in re.finditer(r"\{[^{}]*\}", text, re.S)]
-        for cand in reversed(candidates):
-            try:
-                d = json.loads(cand)
-                if isinstance(d, dict):
-                    return d
-            except Exception:  # noqa: BLE001
-                continue
-        return None
 
     async def _resolve_router_provider(self, event, provider_id: str = ""):
         """路由用的 LLM 提供商：provider_id/配置指定 > 跟随 AstrBot 当前会话提供商。"""
@@ -2086,26 +1982,8 @@ class RemoteLinkPlugin(Star):
 
     async def _retranslate_tags(self, provider, text: str, model: str) -> str:
         """把模型输出的中文提示词再翻译成英文 tag（一次重试，失败返回原文）。"""
-        try:
-            kwargs = {
-                "prompt": f"把下面的提示词翻译成英文 tag（逗号分隔，只输出英文，不要解释）：\n{text}",
-                "system_prompt": "你是提示词翻译器。只输出英文 tag，逗号分隔，禁止任何其他内容。",
-            }
-            if model:
-                kwargs["model"] = model
-            resp = await provider.text_chat(**kwargs)
-            translated = ""
-            if hasattr(resp, "completion_text"):
-                translated = resp.completion_text or ""
-            else:
-                translated = str(resp)
-            translated = translated.strip().strip('"').strip()
-            if translated and len(translated) > 2 and not CJK_RE.search(translated):
-                logger.info("[remote_link] 提示词已自动翻译为英文 tag")
-                return translated[:2000]
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[remote_link] 提示词翻译重试失败: {e}")
-        return text
+        return await retranslate_tags(provider, text, model)
+
 
     async def _maybe_enhance_prompts(
         self, wf_name: str, params: dict, intent: str, event, subtype: str = "",
