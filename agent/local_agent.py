@@ -31,6 +31,7 @@ import logging
 import platform
 import random
 import re
+import shutil
 import socket
 import sys
 import time
@@ -46,6 +47,16 @@ if sys.stderr is None:
     # PyInstaller --windowed 打包后没有控制台：清掉默认的 stderr handler，避免打印报错
     logging.getLogger().handlers.clear()
 logger = logging.getLogger("yunxin_agent")
+
+# v0.2.0 Agent Foundation：能力注册表 + 确定性发现（直接脚本运行和包内导入都兼容）
+try:
+    from core.capability import Capability, CapabilityRegistry
+    from core.discovery import Discovery
+    from core.health import HealthMonitor
+except ImportError:  # 包内相对导入（如作为模块被测试引用）
+    from .core.capability import Capability, CapabilityRegistry
+    from .core.discovery import Discovery
+    from .core.health import HealthMonitor
 
 
 def app_dir() -> Path:
@@ -70,7 +81,8 @@ def bundled_file(name: str) -> Path:
 
 DEFAULT_CONFIG = app_dir() / "agent_config.json"
 
-AGENT_VERSION = "0.1.0"  # 云信互联本地代理版本（随 hello 上报）
+AGENT_VERSION = "0.2.0"  # 云信互联本地代理版本（随 hello 上报）
+PROTOCOL_VERSION = 2  # v2 hello 携带能力列表；服务端仍兼容 v1
 
 # ComfyUI 输出文件扩展名 → MIME 映射（用于回传时标注类型）
 EXT_MIME = {
@@ -95,11 +107,23 @@ def load_config(path: str | None = None) -> dict:
     # utf-8-sig：兼容 Windows 记事本保存的带 BOM 的 JSON
     try:
         with open(p, "r", encoding="utf-8-sig") as f:
-            return json.load(f)
+            cfg = json.load(f)
     except FileNotFoundError:
         return {}  # 配置文件不存在：调用方用默认值兜底
     except json.JSONDecodeError:
         return {}
+
+    if isinstance(cfg, dict) and not cfg.get("config_version"):
+        # v0.2.0 配置迁移策略：不删除未知字段、不覆盖用户配置；
+        # 首次以新版本读取旧配置时自动备份一份，便于回滚。
+        backup = p.with_name(p.name + ".bak-v0.1.1")
+        if not backup.exists():
+            try:
+                shutil.copy2(p, backup)
+                logger.info(f"[remote_link] 已备份旧版配置到 {backup}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[remote_link] 旧配置备份失败: {e}")
+    return cfg
 
 
 def detect_workflow_format(obj) -> str:
@@ -486,6 +510,10 @@ def auto_inject_prompt(prompt_data: dict, params: dict, role_hints: dict | None 
             node = prompt_data.get(nid)
             if not node or not isinstance(node, dict):
                 continue
+            ctype = node.get("class_type") or ""
+            # Simple String 等约定文本入口由 inject_texts 管理，不应被自动提示词注入覆盖
+            if ctype in INJECT_TEXT_TYPES:
+                continue
             inputs = node.get("inputs") or {}
             if not isinstance(inputs, dict):
                 continue
@@ -519,6 +547,9 @@ def auto_inject_prompt(prompt_data: dict, params: dict, role_hints: dict | None 
         if not isinstance(node, dict):
             continue
         ctype = node.get("class_type") or ""
+        # Simple String 等约定文本入口由 inject_texts 管理，不应被自动提示词注入覆盖
+        if ctype in INJECT_TEXT_TYPES:
+            continue
         inputs = node.get("inputs") or {}
         if not isinstance(inputs, dict):
             continue
@@ -753,6 +784,8 @@ class LocalAgent:
         self.ws = None  # 当前到云端插件的 WebSocket
         self.session = None  # 复用的 aiohttp 会话，用于代理本地 HTTP 请求
         self._started = time.time()
+        self._discovery = Discovery(cfg)
+        self._registry = CapabilityRegistry()
         self._connected_at = 0.0
         self._last_error = ""
         self._last_info: dict = {}  # 最近一次本机/服务状态采集（hello 与 info 服务、30s 周期刷新）
@@ -887,10 +920,10 @@ class LocalAgent:
 
     async def _connect_and_serve(self):
         url = str(self.cfg["server_url"]).rstrip("/")
-        token = str(self.cfg.get("token", ""))
-        headers = {}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        token = str(self.cfg.get("token", "")).strip()
+        if not token:
+            raise ValueError("本地代理 token 为空：请在 agent_config.json 中配置与云端一致的 token")
+        headers = {"Authorization": f"Bearer {token}"}
         self.log_event(f"正在连接云端插件：{url}")
         async with self.session.ws_connect(
             url, headers=headers, heartbeat=20, max_msg_size=256 * 1024 * 1024
@@ -899,7 +932,22 @@ class LocalAgent:
             self._connected_at = time.time()
             info = await self.collect_info()
             self._last_info = info
-            await self._send({"type": "hello", "data": info})
+            capabilities = []
+            if (info.get("comfyui") or {}).get("ok"):
+                capabilities.extend(["image.generate", "image.edit", "video.generate"])
+            if (info.get("openai") or {}).get("ok"):
+                capabilities.append("llm.chat")
+            await self._send({
+                "type": "hello",
+                "v": PROTOCOL_VERSION,
+                "agent_version": AGENT_VERSION,
+                "machine": {
+                    "name": str(info.get("hostname") or socket.gethostname()),
+                    "os": str(info.get("platform") or platform.platform()),
+                },
+                "capabilities": capabilities,
+                "data": info,
+            })
             self.log_event("已连接云端插件，等待请求…")
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
@@ -977,6 +1025,11 @@ class LocalAgent:
             info = await self.collect_info()
             self._last_info = info
             return info
+        if service == "discovery":
+            if self.session is None:
+                raise RuntimeError("本地会话尚未初始化")
+            result = await self._discovery.run(self.session)
+            return result.__dict__
         if service == "workflows":
             return await self.svc_workflows(payload)
         if service == "capabilities":
@@ -1224,6 +1277,7 @@ class LocalAgent:
             "llm_models": llm_models,
             "gpu": gpu,
             "queue": queue,
+            "capabilities": self._registry.all_capability_ids(),
             "time": time.time(),
         }
 
@@ -1851,6 +1905,19 @@ class LocalAgent:
         command = payload.get("command", "")
         if not command:
             raise ValueError("命令不能为空")
+        allowed_patterns = shell_cfg.get("allowed_patterns") or []
+        if allowed_patterns:
+            stripped = command.strip()
+            for pattern in allowed_patterns:
+                try:
+                    if re.match(str(pattern), stripped):
+                        break
+                except re.error:
+                    raise ValueError(f"shell.allowed_patterns 中存在非法正则: {pattern}") from None
+            else:
+                raise PermissionError(
+                    "命令不在本地 shell.allowed_patterns 白名单内，已拒绝执行"
+                )
         timeout = int(shell_cfg.get("timeout", 60))
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -1884,6 +1951,20 @@ class LocalAgent:
         info["comfyui"] = await self._check_comfyui()
         info["openai"] = await self._check_openai()
         info["openai_services"] = await self._check_openai_services()
+
+        # 把当前探测结果同步到 Capability Registry
+        self._registry = CapabilityRegistry()
+        capability_ids: list[str] = []
+        if info["comfyui"].get("ok"):
+            capability_ids.extend(["image.generate", "image.edit", "video.generate"])
+        if info["openai"].get("ok"):
+            capability_ids.append("llm.chat")
+        for cid in capability_ids:
+            self._registry.register(Capability(
+                id=cid, provider="comfyui" if cid.startswith(("image.", "video.")) else "openai",
+                status="ready", last_healthcheck=time.time(),
+            ))
+        info["capabilities"] = self._registry.all_capability_ids()
         return info
 
     async def _check_openai_services(self) -> list[dict]:

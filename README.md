@@ -159,7 +159,11 @@ docker run -d \
     "default_workflow_file": ""
   },
   "openai": { "base_url": "http://127.0.0.1:11434/v1", "api_key": "", "timeout": 300 },
-  "shell": { "enabled": false, "timeout": 60 }
+  "shell": {
+    "enabled": false,
+    "timeout": 60,
+    "allowed_patterns": ["^nvidia-smi", "^ffmpeg"]
+  }
 }
 ```
 
@@ -174,6 +178,7 @@ docker run -d \
 | `openai.base_url` | 本地 LLM 地址 | Ollama `http://127.0.0.1:11434/v1`；LM Studio `http://127.0.0.1:1234/v1` |
 | `dashboard_port` | 本地看板端口 | `0` = 关闭看板 |
 | `shell.enabled` | Shell 总开关（危险能力） | 与云端 `enable_shell` 是「与」关系，双开才生效 |
+| `shell.allowed_patterns` | Shell 命令正则白名单（可选） | 非空时只放行匹配命令；默认 `[]` = 不额外限制 |
 
 > ✅ **怎么判断这一步对了**：状态点变绿「●已连接」；浏览器打开 `http://127.0.0.1:8899` 能看到本地看板，里面有「已连接云端插件，等待请求」。
 
@@ -812,8 +817,8 @@ flowchart TD
 > [!CAUTION]
 > 这条隧道通向你的电脑，**token 就是钥匙**。下面几条请务必看完。
 
-1. **必须设强 `auth_token`** —— 隧道和 OpenAI 代理都靠它，建议 32 字节随机串（`openssl rand -hex 32`）
-2. **默认是明文 `ws://`** —— 介意就用 Nginx / Caddy 套一层 TLS：
+1. **禁止空 token 裸奔** —— v0.2.0 起若云端 `auth_token` 为空，插件会首次启动自动生成 32 字节随机 Token 并保存；本地代理 `token` 为空时会拒绝连接并提示。认证默认使用 `Authorization: Bearer <token>`，旧版 `?token=` 仅保留为 deprecated 兼容。
+2. **生产部署请用 `wss://`** —— 公网裸 `ws://IP:8468` 只适合内网/测试；推荐用 Nginx / Caddy 反代套 TLS：
 
    ```nginx
    location /ws {
@@ -827,11 +832,13 @@ flowchart TD
 
    然后把代理的 `server_url` 改成 `wss://你的域名/ws`，防火墙只放行 443。
 
-3. **Shell 是危险能力** —— 双端默认关闭；开了之后任何拿到 token 的人都能在你电脑上执行命令。指令入口已限管理员，请只在可信环境开。
-4. **单机单代理** —— 同一时刻只允许一个代理在线，新连接顶掉旧的。
-5. **本地看板只绑 `127.0.0.1`** —— 外网访问不到；图片、视频、SSE 全走同一条认证隧道。
-6. **产物是明文文件** —— 缓存在 `plugin_data/astrbot_plugin_remote_link/media/`，涉敏内容记得定期清理。
-7. **别把配置文件传上网** —— `agent_config.json` 里有你的服务器地址和 token，仓库的 `.gitignore` 已排除它。
+3. **媒体下载已签名** —— `/media` 不再匿名裸奔；URL 带 30 分钟有效期的 HMAC-SHA256 签名（`expires` + `sig`），过期/伪造一律 403。
+4. **Shell 是危险能力** —— 双端默认关闭；本地还可配置 `shell.allowed_patterns` 正则白名单（如 `^nvidia-smi`），非空时只放行匹配命令。任何拿到 token 的人都能执行白名单内命令，请只在可信环境开。
+5. **基础限流已内置** —— `/ws`、`/submit`、`/v1/*` 加入滑动窗口限流，降低脚本爆破风险。
+6. **单机单代理** —— 同一时刻只允许一个代理在线，新连接顶掉旧的。
+7. **本地看板只绑 `127.0.0.1`** —— 外网访问不到；图片、视频、SSE 全走同一条认证隧道。
+8. **产物是明文文件** —— 缓存在 `plugin_data/astrbot_plugin_remote_link/media/`，涉敏内容记得定期清理。
+9. **别把配置文件传上网** —— `agent_config.json` 里有你的服务器地址和 token，仓库的 `.gitignore` 已排除它。
 
 ---
 

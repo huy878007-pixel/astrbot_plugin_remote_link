@@ -19,6 +19,8 @@
   },
   "shell": {
     "enabled": false,
-    "timeout": 60
-  }
+    "timeout": 60,
+    "allowed_patterns": []
+  },
+  "config_version": 2
 }

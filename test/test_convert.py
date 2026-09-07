@@ -98,13 +98,14 @@ def test_detect():
 
 
 def test_convert():
-    result = convert_ui_to_api(UI_WORKFLOW, OBJECT_INFO)
+    result, role_hints = convert_ui_to_api(UI_WORKFLOW, OBJECT_INFO)
     assert result == EXPECTED, f"转换结果不符:\n{result}\n期望:\n{EXPECTED}"
+    assert role_hints == {}, "无标题标签时应返回空 role_hints"
 
 
 def test_convert_missing_node_def():
     # 无连线的"孤儿"缺失节点（前端专属笔记类）→ 跳过，不报错
-    result = convert_ui_to_api(
+    result, _ = convert_ui_to_api(
         {"nodes": [{"id": 1, "type": "NoSuchNode", "widgets_values": []}], "links": []},
         OBJECT_INFO,
     )

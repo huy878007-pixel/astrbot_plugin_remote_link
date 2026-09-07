@@ -3,7 +3,7 @@ desc: 云信互联：让云端 AstrBot 通过反向隧道调用你本地电脑�
 display_name: 云信互联 Yunxin Interconnect
 short_desc: 云信互联：云端 AstrBot ↔ 本地电脑隧道，调用本地 ComfyUI 工作流、本地 LLM
 author: 滑稽star
-version: v0.1.1
+version: v0.2.0
 repo: "https://github.com/huy878007-pixel/astrbot_plugin_remote_link"
 tags:
   - comfyui

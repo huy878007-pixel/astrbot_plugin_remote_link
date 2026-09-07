@@ -4,6 +4,7 @@ import asyncio
 import base64
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -12,9 +13,7 @@ sys.path.insert(0, str(ROOT.parent))  # 让 astrbot_plugin_remote_link 包可导
 
 from astrbot_plugin_remote_link.main import RemoteLinkPlugin  # noqa: E402
 
-CACHE = Path(r"D:\Temp\_media_cache_test")
-shutil.rmtree(CACHE, ignore_errors=True)
-CACHE.mkdir(parents=True)
+CACHE = Path(tempfile.mkdtemp(prefix="yunxin_cache_test_"))
 
 
 class _P(RemoteLinkPlugin):

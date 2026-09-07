@@ -25,6 +25,8 @@
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import re
@@ -48,6 +50,11 @@ from .tools.shell import build_shell_tool
 from .tools.smart import build_compute_tool
 
 PLUGIN_NAME = "astrbot_plugin_remote_link"
+
+# v0.2.0 起将插件、代理、协议版本显式分离，握手时用于兼容性判断。
+PLUGIN_VERSION = "0.2.0"
+PROTOCOL_VERSION = 2
+MIN_PROTOCOL_VERSION = 1  # 仍兼容 v0.1.x 的 v1 消息
 
 # 产物扩展名 → MIME（Web 预览用）
 EXT_MIME = {
@@ -211,6 +218,12 @@ class RemoteLinkPlugin(Star):
         super().__init__(context)
         self.config = config
 
+        # v0.2.0 安全基线：禁止空 token 裸奔。首次启动自动生成随机 token 并持久化。
+        self._ensure_auth_token()
+
+        # ---- 基础限流状态（内存滑动窗口，足够抵御脚本滥用）----
+        self._rate_hits: dict[str, deque] = {}  # "method path ip" -> deque[timestamp]
+
         # ---- 隧道状态 ----
         self._ws = None  # 当前本地代理的 WebSocket 连接（同一时刻只允许一个代理在线）
         self._pending = {}  # rid -> asyncio.Future，等待本地代理的响应
@@ -258,6 +271,71 @@ class RemoteLinkPlugin(Star):
         self._register_pages()
 
         self._ensure_server()
+
+    # ==================== 安全基础 ====================
+
+    def _ensure_auth_token(self) -> str:
+        """保证插件一定存在非空 auth_token（v0.2.0 P0）。"""
+        token = str(self.config.get("auth_token") or "").strip()
+        if token:
+            return token
+        token = secrets.token_urlsafe(32)
+        self.config["auth_token"] = token
+        save = getattr(self.config, "save_config", None)
+        try:
+            if callable(save):
+                save()
+                logger.warning("[remote_link] 检测到 auth_token 为空，已自动生成并保存随机 token")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[remote_link] auth_token 为空，已生成随机 token 但保存配置失败: {e}")
+        return token
+
+    def _rate_limit_key(self, request) -> str:
+        ip = getattr(request, "remote", None) or "unknown"
+        path = getattr(request, "path", None) or "/"
+        return f"{path} {ip}"
+
+    def _check_rate_limit(self, request, limit: int = 60, window: int = 60) -> bool:
+        """极简滑动窗口限流。返回 False 表示应拒绝。"""
+        key = self._rate_limit_key(request)
+        now = time.time()
+        q = self._rate_hits.setdefault(key, deque())
+        while q and q[0] < now - window:
+            q.popleft()
+        if len(q) >= limit:
+            return False
+        q.append(now)
+        return True
+
+    def _media_signature(self, filename: str, expires: int) -> str:
+        secret = str(self._ensure_auth_token())
+        msg = f"{filename}:{expires}".encode("utf-8")
+        return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+    def _verify_media_signature(self, request) -> bool:
+        filename = request.query.get("filename", "").strip()
+        expires = request.query.get("expires", "").strip()
+        sig = request.query.get("sig", "").strip()
+        if not filename or not expires or not sig:
+            return False
+        try:
+            expires_int = int(expires)
+        except ValueError:
+            return False
+        if expires_int < time.time():
+            return False
+        expected = self._media_signature(Path(filename).name, expires_int)
+        return hmac.compare_digest(expected, sig)
+
+    def _signed_media_url(self, filename: str, ttl: int = 1800) -> str:
+        """生成短期有效的 /media 签名 URL（默认 30 分钟）。"""
+        from urllib.parse import urlencode
+
+        name = Path(filename).name
+        expires = int(time.time()) + ttl
+        sig = self._media_signature(name, expires)
+        qs = urlencode({"filename": name, "expires": expires, "sig": sig})
+        return f"http://{_container_ip()}:8468/media?{qs}"
 
     # ==================== 工具注册 ====================
 
@@ -1164,7 +1242,7 @@ class RemoteLinkPlugin(Star):
             self._runner = runner
             logger.info(
                 f"[remote_link] 隧道服务端已启动: ws://{host}:{port}/ws "
-                f"（Docker 部署需映射此端口，防火墙需放行）"
+                f"（生产建议通过 Nginx/Caddy 反代为 wss://；Docker 部署需映射此端口）"
             )
             while True:
                 await asyncio.sleep(3600)
@@ -1181,18 +1259,19 @@ class RemoteLinkPlugin(Star):
     # ==================== 认证与 WebSocket 隧道 ====================
 
     def _authorized(self, request) -> bool:
-        """统一鉴权：query ?token= 或 Authorization: Bearer 均可。"""
-        token = str(self.config.get("auth_token", ""))
-        if not token:
-            return True  # 未配置 token：不校验（仅建议内网/测试环境）
-        if request.query.get("token") == token:
-            return True
+        """统一鉴权：默认 Bearer Token；旧版 ?token= 仅作 deprecated 兼容。"""
+        token = self._ensure_auth_token()
         if request.headers.get("Authorization", "") == f"Bearer {token}":
+            return True
+        # 旧版 URL Query 兼容（v0.2.0 标记为 deprecated，仍允许平滑升级）
+        if request.query.get("token") == token:
             return True
         return False
 
     async def _handle_ws(self, request):
         """WebSocket 隧道入口：本地代理拨入后保持长连接。"""
+        if not self._check_rate_limit(request, limit=60, window=60):
+            return web.Response(status=429, text="too many requests")
         if not self._authorized(request):
             return web.Response(status=401, text="unauthorized")
         # heartbeat：让 aiohttp 自动回复客户端 ping（agent 端 ws_connect(heartbeat=30)
@@ -1246,9 +1325,38 @@ class RemoteLinkPlugin(Star):
         if mtype == "hello":
             self._agent_info = data.get("data") or {}
             self._agent_connected_at = time.time()
+            self._agent_info["agent_version"] = data.get("agent_version")
+            self._agent_info["protocol_version"] = data.get("v")
+            self._agent_info["capabilities"] = data.get("capabilities") or []
+            self._agent_info["machine"] = data.get("machine") or {}
             info = self._agent_info
+            proto = data.get("v")
+            try:
+                proto = int(proto or 1)
+            except (TypeError, ValueError):
+                proto = 1
+            if proto < MIN_PROTOCOL_VERSION or proto > PROTOCOL_VERSION:
+                logger.error(
+                    f"[remote_link] 代理协议版本 {proto} 不受支持（需 {MIN_PROTOCOL_VERSION}-{PROTOCOL_VERSION}）"
+                )
+                self._agent_info["protocol_error"] = (
+                    f"Protocol version {proto} is not supported. Server requires protocol >=2."
+                )
+            elif proto == 1:
+                logger.info("[remote_link] 检测到 v1 旧协议，按兼容模式继续")
+            hostname = (
+                info.get("hostname")
+                or (info.get("machine") or {}).get("name")
+                or "unknown"
+            )
+            platform_name = (
+                info.get("platform")
+                or (info.get("machine") or {}).get("os")
+                or "unknown"
+            )
             logger.info(
-                f"[remote_link] 代理 hello: {info.get('hostname')} ({info.get('platform')})"
+                f"[remote_link] 代理 hello v{proto}: {hostname} ({platform_name}) "
+                f"capabilities={','.join(self._agent_info.get('capabilities') or [])}"
             )
         elif mtype == "response":
             fut = self._pending.pop(data.get("id"), None)
@@ -1367,6 +1475,8 @@ class RemoteLinkPlugin(Star):
 
         与 QQ/Web 同一套内生调度；产物在队列可见（web: 来源，无会话可发）。
         """
+        if not self._check_rate_limit(request, limit=30, window=60):
+            return web.Response(status=429, text="too many requests")
         if not self._authorized(request):
             return web.Response(status=401, text="unauthorized")
         try:
@@ -1394,10 +1504,13 @@ class RemoteLinkPlugin(Star):
         return web.json_response({"ok": True, "task_id": rec["task_id"], "status": "queued", "images": len(images)})
 
     async def _http_media(self, request):
-        """内嵌 HTTP 媒体下载端点（GET /media?filename=xxx，不鉴权，NapCat 拉视频用）。
+        """内嵌 HTTP 媒体下载端点（GET /media?filename=xxx&expires=...&sig=...）。
 
+        v0.2.0 起要求短期 HMAC 签名；未签名/过期/伪造一律 403。
         只允许读取 media 目录下的产物文件；文件未拉取时先按需从本地代理拉取。
         """
+        if not self._verify_media_signature(request):
+            return web.Response(status=403, text="invalid or expired media signature")
         filename = request.query.get("filename", "").strip()
         if not filename:
             return web.json_response({"ok": False, "message": "缺少 filename"}, status=400)
@@ -1418,6 +1531,8 @@ class RemoteLinkPlugin(Star):
 
     async def _http_task_send(self, request):
         """本地 GUI 发送产物到会话（POST /task_send，auth_token 鉴权）。"""
+        if not self._check_rate_limit(request, limit=30, window=60):
+            return web.Response(status=429, text="too many requests")
         if not self._authorized(request):
             return web.Response(status=401, text="unauthorized")
         try:
@@ -1443,11 +1558,15 @@ class RemoteLinkPlugin(Star):
 
     async def _http_queue(self, request):
         """本地 GUI 查询任务队列（GET /queue，auth_token 鉴权）。"""
+        if not self._check_rate_limit(request, limit=30, window=60):
+            return web.Response(status=429, text="too many requests")
         if not self._authorized(request):
             return web.Response(status=401, text="unauthorized")
         return web.json_response({"queue": self._queue_snapshot()})
 
     async def _handle_models(self, request):
+        if not self._check_rate_limit(request, limit=120, window=60):
+            return web.Response(status=429, text="too many requests")
         if not self._authorized(request):
             return web.Response(status=401, text="unauthorized")
         try:
@@ -1481,6 +1600,8 @@ class RemoteLinkPlugin(Star):
           api_key  = <auth_token>
         即可把本地 LLM 直接当作 AstrBot 的大脑使用。
         """
+        if not self._check_rate_limit(request, limit=120, window=60):
+            return web.Response(status=429, text="too many requests")
         if not self._authorized(request):
             return web.Response(status=401, text="unauthorized")
         try:
@@ -1683,16 +1804,14 @@ class RemoteLinkPlugin(Star):
         for f in files:
             yield from self._yield_media_result(event, f)
 
-    @staticmethod
-    def _media_file_url(filename: str) -> str:
+    def _media_file_url(self, filename: str) -> str:
         """产物媒体 URL（NapCat 从 URL 下载视频用）。
 
         OneBot 11 要求 file 字段为 file:/// 或 http url；NapCat 读不到 AstrBot 容器内
-        路径（ENOENT），但能访问 Docker 内网。故用内嵌 HTTP(8468, 无面板鉴权) + 容器内网 IP。
+        路径（ENOENT），但能访问 Docker 内网。故用内嵌 HTTP(8468) + 容器内网 IP。
+        v0.2.0 起 URL 带短期 HMAC 签名，默认 30 分钟过期。
         """
-        from urllib.parse import quote
-
-        return f"http://{_container_ip()}:8468/media?filename={quote(Path(filename).name)}"
+        return self._signed_media_url(Path(filename).name)
 
     async def _send_media_to_origin(self, origin: str, files: list[dict]) -> bool:
         """把产物直接发送到指定会话（不依赖事件对象，供 Web 控制台"发送到QQ"用）。"""

@@ -1,5 +1,32 @@
 # 变更日志
 
+## v0.2.0（2026-09-07）— Agent Foundation 重构
+
+> 本版本以架构整理、安全加固和本地 Agent 基础能力为主，不堆叠大量新业务功能。
+
+### 🔒 安全底座整改
+
+- **禁止空 token 裸奔**：云端 `auth_token` 为空时首次启动自动生成 32 字节随机 Token；本地代理 `token` 为空时拒绝连接。
+- **Bearer Token 成为默认认证**：`Authorization: Bearer <token>`；旧版 `?token=` 保留为 deprecated 兼容。
+- **`/media` 改为签名访问**：HMAC-SHA256 + 过期时间，默认 30 分钟有效，过期/伪造返回 403。
+- **Shell 白名单**：本地 `shell.allowed_patterns` 支持正则白名单（如 `^nvidia-smi`），非空时只放行匹配命令。
+- **基础限流**：`/ws`、`/submit`、`/v1/*` 加入滑动窗口限流。
+
+### 🧱 Agent Foundation
+
+- **版本分离**：新增 `PLUGIN_VERSION` / `AGENT_VERSION` / `PROTOCOL_VERSION`，hello v2 上报 `machine` + `capabilities`。
+- **Capability Registry**：`agent/core/capability.py` 提供能力注册/查询/健康状态。
+- **确定性 Discovery**：`agent/core/discovery.py` 探测本机硬件、ComfyUI、OpenAI 兼容服务、FFmpeg。
+- **Health Monitor**：`agent/core/health.py` 提供轻量周期健康检查基类。
+- **Adapter 接口**：`agent/adapters/base.py` 定义统一 Adapter 抽象。
+- **配置迁移备份**：首次以 v2 读取旧 `agent_config.json` 自动备份 `.bak-v0.1.1`，不覆盖用户配置。
+
+### 🧪 测试与 CI
+
+- 新增 `test_capability_registry.py`、`test_discovery.py`、`test_auth.py`、`test_media_signature.py`。
+- 新增 GitHub Actions CI（`.github/workflows/tests.yml`），执行语法检查、单元测试、driver 与 smoke 测试。
+- 修复既有测试基线：UI→API 转换返回 `(prompt, role_hints)` 后更新断言；`Simple String` 文本入口不再被自动提示词注入覆盖；产物回传断言适配当前“仅元数据 + media_get 分块拉取”的架构。
+
 ## v0.1.1（2026-08-21）— 提示词注入与产物送达修复
 
 一轮实战排查（群内真实使用暴露的 4 个连锁问题），全部附带可运行的回归检查。

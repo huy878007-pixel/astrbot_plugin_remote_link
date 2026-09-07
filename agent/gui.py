@@ -37,7 +37,7 @@ from local_agent import (
     load_config,
 )
 
-APP_NAME = "云信互联 本地代理 v0.1.0"
+APP_NAME = "云信互联 本地代理 v0.2.0"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "YunxinAgent"
 FONT = "Microsoft YaHei UI"
@@ -59,7 +59,7 @@ DEFAULT_CONFIG_DICT = {
     "openai": {"base_url": "http://127.0.0.1:11434/v1", "api_key": "", "timeout": 300},
     # 多 LLM 服务：额外服务列表（GUI 多服务状态总览）
     "openai_services": [],
-    "shell": {"enabled": False, "timeout": 60},
+    "shell": {"enabled": False, "timeout": 60, "allowed_patterns": []},
     # GUI 偏好（存同一配置文件）
     "gui_overview_cards": ["services", "resources", "task", "recent"],
     "gui_notify_on_done": True,
@@ -80,6 +80,7 @@ FORM_FIELDS = [
     ("其他", "本地看板端口（0=关闭）", ("dashboard_port",), "int"),
     ("其他", "允许云端执行 Shell 命令", ("shell", "enabled"), "bool"),
     ("其他", "Shell 超时（秒）", ("shell", "timeout"), "int"),
+    ("其他", "Shell 命令白名单（正则，JSON 数组）", ("shell", "allowed_patterns"), "str"),
 ]
 
 LOG_LEVELS = ("全部", "INFO", "WARNING", "ERROR")
@@ -1087,6 +1088,15 @@ class YunxinGui:
                     except ValueError:
                         messagebox.showerror(APP_NAME, f"「{key}」需要整数")
                         return
+                elif keys[-1] == "allowed_patterns":
+                    try:
+                        val = json.loads(raw) if raw.strip() else []
+                        if not isinstance(val, list):
+                            raise ValueError("需要 JSON 数组")
+                        _set_nested(cfg, keys, val)
+                    except Exception:
+                        messagebox.showerror(APP_NAME, f"「{key}」需要 JSON 数组，例如 [\"^nvidia-smi\"]")
+                        return
                 else:
                     _set_nested(cfg, keys, raw)
         cfg.setdefault("openai_services", [])
@@ -1177,6 +1187,8 @@ class YunxinGui:
             val = _get_nested(cfg, tuple(key.split(".")))
             if isinstance(var, tk.BooleanVar):
                 var.set(bool(val))
+            elif isinstance(val, (list, dict)):
+                var.set(json.dumps(val, ensure_ascii=False))
             else:
                 var.set(str(val) if val is not None else "")
 

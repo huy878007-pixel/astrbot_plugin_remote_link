@@ -143,7 +143,7 @@ async def main():
 
     cfg = {
         "server_url": f"ws://127.0.0.1:{port}/ws",
-        "token": "",
+        "token": "test-token",
         "reconnect_seconds": 1,
         "request_timeout": 30,
         "dashboard_port": 0,  # 测试里关闭看板

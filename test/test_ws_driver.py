@@ -141,7 +141,7 @@ async def run_scenario(ws_enabled: bool) -> dict:
 
     cfg = {
         "server_url": "ws://127.0.0.1:1/ws",  # 云端隧道用不到（不走隧道）
-        "token": "",
+        "token": "test-token",
         "reconnect_seconds": 5,
         "request_timeout": 30,
         "dashboard_port": 0,
@@ -228,7 +228,7 @@ async def test_workflow_file_manage():
     wf_root.mkdir(parents=True)
     cfg = {
         "server_url": "ws://127.0.0.1:1/ws",
-        "token": "",
+        "token": "test-token",
         "reconnect_seconds": 5,
         "request_timeout": 30,
         "dashboard_port": 0,
@@ -287,7 +287,7 @@ async def test_upload_inject_and_metadata():
     (wf_root / "upload_demo.json").write_text(json.dumps(UPLOAD_WORKFLOW), encoding="utf-8")
     cfg = {
         "server_url": "ws://127.0.0.1:1/ws",
-        "token": "",
+        "token": "test-token",
         "reconnect_seconds": 5,
         "request_timeout": 30,
         "dashboard_port": 0,
@@ -345,7 +345,8 @@ async def test_upload_inject_and_metadata():
     assert files[0]["main"] is True and files[0]["filename"].startswith("Final"), files[0]
     assert files[1]["main"] is False and files[1]["filename"].startswith("Step"), files[1]
     assert files[0]["node_type"] == "SaveImage" and files[0]["node"] == "9", files[0]
-    assert base64.b64decode(files[0]["base64"]) == PNG_1PX
+    # 本地代理工作流响应只返回产物元数据，实际文件由 media_get 分块拉取
+    assert "base64" not in files[0], files[0]
     return files
 
 
@@ -369,12 +370,12 @@ async def main():
     # 产物
     files = out["result"]["files"]
     assert len(files) == 1 and files[0]["kind"] == "image"
-    assert base64.b64decode(files[0]["base64"]) == PNG_1PX
-    print("[3/6] WS 推送模式 + 入口注入 + 产物回传 OK")
+    assert files[0]["filename"] == "out.png", files[0]
+    print("[3/6] WS 推送模式 + 入口注入 + 产物元数据 OK")
 
     out2 = await run_scenario(ws_enabled=False)
     files2 = out2["result"]["files"]
-    assert len(files2) == 1 and base64.b64decode(files2[0]["base64"]) == PNG_1PX
+    assert len(files2) == 1 and files2[0]["filename"] == "out.png", files2
     print("[4/6] 无 WS 支持 → 轮询兜底 OK")
 
     await test_workflow_file_manage()
