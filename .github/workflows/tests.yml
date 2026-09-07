@@ -38,6 +38,7 @@ jobs:
           python test/test_config_migration.py
           python test/test_protocol_v2.py
           python test/test_tunnel.py
+          python test/test_task_manager.py
       - name: Driver / smoke tests
         run: |
           python test/test_ws_driver.py

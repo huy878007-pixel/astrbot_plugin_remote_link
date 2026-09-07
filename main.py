@@ -47,6 +47,7 @@ from astrbot.api.star import Context, Star
 
 from .core.exceptions import RemoteLinkError
 from .core.protocol import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
+from .core.task_manager import TaskManager
 from .core.tunnel import TunnelServer
 from .tools.local_llm import build_llm_tool
 from .tools.shell import build_shell_tool
@@ -226,11 +227,7 @@ class RemoteLinkPlugin(Star):
         self._media_dir = _plugin_data_dir() / "media"
 
         # ---- 任务队列（异步执行：工具立即返回，后台完成后再主动推送）----
-        self._task_queue: deque = deque(maxlen=50)  # 任务记录，最新在前
-        self._task_seq = 0
-        self._confirm_pending: dict = {}  # event_origin -> 待确认任务（人工确认模式）
-        self._confirm_by_task: dict = {}  # task_id -> event_origin（Web 审批索引）
-        self._recent_by_origin: dict = {}  # event_origin -> 最近完成任务的 task_id（数字选择发送用）
+        self.tasks = TaskManager()
 
         # ---- 提示词增强会话缓存（按 origin）----
         # 用户要求「保留对话记录，一直做分析」：OpenAI 兼容 API 无状态，
@@ -416,14 +413,13 @@ class RemoteLinkPlugin(Star):
         action = str(payload.get("action") or "").strip().lower()
         if not task_id or action not in ("approve", "reject"):
             return error_response("需要 task_id 与 action（approve/reject）", status_code=400)
-        origin = self._confirm_by_task.get(task_id)
+        origin = self.tasks.confirm_by_task.get(task_id)
         if origin is None:
             return error_response(f"任务 {task_id} 不在待审批状态", status_code=404)
-        pending = self._confirm_pending.get(origin)
+        pending = self.tasks.confirm_pending.get(origin)
         if pending is None:
             return error_response(f"任务 {task_id} 待审批数据丢失", status_code=404)
-        self._confirm_pending.pop(origin, None)
-        self._confirm_by_task.pop(task_id, None)
+        self.tasks.clear_confirmation(origin, task_id)
         rec = pending["rec"]
         if action == "reject":
             self._queue_update(rec, status="failed", finished_at=time.time(), error="已在控制台拒绝")
@@ -491,7 +487,7 @@ class RemoteLinkPlugin(Star):
         task_id = str(payload.get("task_id") or "").strip()
         if not task_id:
             return error_response("缺少 task_id", status_code=400)
-        rec = next((r for r in self._task_queue if r.get("task_id") == task_id), None)
+        rec = self.tasks.find_by_task_id(task_id)
         if rec is None:
             return error_response(f"任务 {task_id} 不存在", status_code=404)
         files = rec.get("files") or []
@@ -538,11 +534,7 @@ class RemoteLinkPlugin(Star):
 
     def _find_media_record(self, filename: str):
         """在任务队列的产物记录里按文件名找元数据（供 Web 预览懒拉取）。"""
-        for rec in self._task_queue:
-            for f in rec.get("files") or []:
-                if f.get("filename") == filename:
-                    return f
-        return None
+        return self.tasks.find_media_record(filename)
 
     async def _api_capabilities_summary(self) -> dict:
         """能力清单摘要（概览页展示，拉取失败时给出空摘要）。"""
@@ -1314,7 +1306,7 @@ class RemoteLinkPlugin(Star):
         task_id = str((payload or {}).get("task_id") or "").strip()
         if not task_id:
             return web.json_response({"ok": False, "message": "缺少 task_id"}, status=400)
-        rec = next((r for r in self._task_queue if r.get("task_id") == task_id), None)
+        rec = self.tasks.find_by_task_id(task_id)
         if rec is None:
             return web.json_response({"ok": False, "message": f"任务 {task_id} 不存在"}, status=404)
         files = rec.get("files") or []
@@ -2544,55 +2536,14 @@ class RemoteLinkPlugin(Star):
 
     def _queue_record(self, **kw) -> dict:
         """创建一条任务队列记录（内部结构）。"""
-        self._task_seq += 1
-        rec = {
-            "id": self._task_seq,
-            "task_id": f"task-{self._task_seq}",
-            "status": kw.get("status", "queued"),  # queued/running/waiting_confirm/success/failed
-            "workflow": kw.get("workflow", ""),
-            "subtype": kw.get("subtype", ""),
-            "prompt": kw.get("prompt", ""),
-            "intent": kw.get("intent", ""),
-            "origin": kw.get("origin", ""),
-            "created_at": time.time(),
-            "started_at": None,
-            "finished_at": None,
-            "files": [],
-            "error": "",
-            "progress": "",
-        }
-        self._task_queue.appendleft(rec)
-        return rec
+        return self.tasks.create_record(**kw)
 
     def _queue_update(self, rec: dict, **kw):
-        for k, v in kw.items():
-            rec[k] = v
+        self.tasks.update(rec, **kw)
 
     def _queue_snapshot(self) -> list[dict]:
         """对外队列快照（供 API / Web 展示）。提示词/意图/错误给完整内容，Web 端折叠展示。"""
-        out = []
-        for r in self._task_queue:
-            out.append(
-                {
-                    "task_id": r["task_id"],
-                    "status": r["status"],
-                    "workflow": r["workflow"],
-                    "subtype": r["subtype"],
-                    "prompt": r.get("prompt") or "",
-                    "intent": r.get("intent") or "",
-                    "origin": r.get("origin", ""),
-                    "created_at": r.get("created_at"),
-                    "started_at": r.get("started_at"),
-                    "finished_at": r.get("finished_at"),
-                    "files": [
-                        {"kind": f.get("kind"), "filename": f.get("filename")}
-                        for f in (r.get("files") or [])
-                    ],
-                    "error": r.get("error") or "",
-                    "progress": r.get("progress", ""),
-                }
-            )
-        return out
+        return self.tasks.snapshot()
 
     async def _send_to_origin(self, event, text: str = "", files: list[dict] | None = None) -> str:
         """把文本/产物主动推送到任务来源会话（后台任务完成后用）。
@@ -2700,10 +2651,10 @@ class RemoteLinkPlugin(Star):
                 send_note = await self._send_to_origin(event, text=txt[:4000])
             else:
                 origin = str(getattr(event, "unified_msg_origin", "") or "")
-                self._recent_by_origin[origin] = {
+                self.tasks.set_recent(origin, {
                     "task_id": rec["task_id"],
                     "sender": self._event_sender_id(event),
-                }
+                })
                 explain = result.get("explanation") or ""
                 if files:
                     if rec.get("web_submit"):
@@ -2749,8 +2700,7 @@ class RemoteLinkPlugin(Star):
             "task_id": rec["task_id"],
             "images": images or [],
         }
-        self._confirm_pending[origin] = pending
-        self._confirm_by_task[rec["task_id"]] = origin
+        self.tasks.set_confirmation(origin, pending)
         label = SUBTYPE_LABELS.get(rec.get("subtype") or "", rec.get("workflow") or "")
         prompt = str(params.get("PROMPT") or params.get("prompt") or "")[:500]
         msg = (
@@ -2767,8 +2717,7 @@ class RemoteLinkPlugin(Star):
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[remote_link] 发送确认询问失败: {e}")
             # 发不出确认就直接执行（避免任务卡死）
-            self._confirm_pending.pop(origin, None)
-            self._confirm_by_task.pop(rec["task_id"], None)
+            self.tasks.clear_confirmation(origin, rec["task_id"])
             self._queue_update(rec, status="running")
             await self._run_task_background(rec, intent, workflow_hint, event, image_urls, video_urls, decision)
 
@@ -2806,10 +2755,10 @@ class RemoteLinkPlugin(Star):
 
     async def _handle_confirm_reply(self, event):
         """全局消息监听：捕获对待确认任务的回复（确认/取消）。"""
-        if not self._confirm_pending:
+        if not self.tasks.confirm_pending:
             return False
         origin = str(getattr(event, "unified_msg_origin", "") or "")
-        pending = self._confirm_pending.get(origin)
+        pending = self.tasks.confirm_pending.get(origin)
         if pending is None:
             return False
         text = (event.message_str or "").strip().lower()
@@ -2819,8 +2768,7 @@ class RemoteLinkPlugin(Star):
         cancelled = any(k in text for k in ("取消", "不要", "no", "算了", "停止"))
         if not confirmed and not cancelled:
             return False
-        self._confirm_pending.pop(origin, None)
-        self._confirm_by_task.pop(pending.get("task_id"), None)
+        self.tasks.clear_confirmation(origin, pending.get("task_id"))
         rec = pending["rec"]
         if cancelled:
             self._queue_update(rec, status="failed", finished_at=time.time(), error="用户取消")
@@ -2844,7 +2792,7 @@ class RemoteLinkPlugin(Star):
         # 防重：只拦截「同一条消息的重复提交」——同一会话 60 秒内、相同意图 才视为重复
         # （外部群聊 Agent 与直接指令接管可能对同一条消息同时触发）。
         # 不同意图的新任务正常入队（同一会话可排队多个任务）。
-        for rec in self._task_queue:
+        for rec in self.tasks.queue:
             if (
                 rec.get("origin") == origin
                 and rec.get("status") in ("queued", "running", "waiting_confirm")
@@ -2947,7 +2895,7 @@ class RemoteLinkPlugin(Star):
         （call_handler 里 event.set_result(ret)）；yield True 表示「已拦截」，不再走 LLM。
         """
         # 1) 人工确认回复
-        if self._confirm_pending:
+        if self.tasks.confirm_pending:
             try:
                 handled = await self._handle_confirm_reply(event)
                 if handled:
@@ -3051,22 +2999,11 @@ class RemoteLinkPlugin(Star):
 
     def _recent_meta(self, origin: str) -> dict:
         """按会话找最近完成任务的记录（task_id + 发起者 sender_id）。"""
-        meta = self._recent_by_origin.get(origin) or {}
-        task_id = meta.get("task_id") if isinstance(meta, dict) else meta
-        for rec in self._task_queue:
-            if rec.get("task_id") == task_id:
-                return {"task_id": task_id, "sender": meta.get("sender", "")}
-        return {}
+        return self.tasks.recent_meta(origin)
 
     def _find_recent_files(self, origin: str) -> list[dict]:
         """按会话找最近完成任务的产物文件列表（带 path）。"""
-        meta = self._recent_meta(origin)
-        if not meta:
-            return []
-        for rec in self._task_queue:
-            if rec.get("task_id") == meta["task_id"]:
-                return rec.get("files") or []
-        return []
+        return self.tasks.find_recent_files(origin)
 
     @staticmethod
     def _event_sender_id(event) -> str:
