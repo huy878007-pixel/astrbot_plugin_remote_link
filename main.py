@@ -45,6 +45,9 @@ from astrbot.api import AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
 
+from .core.exceptions import RemoteLinkError
+from .core.protocol import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
+from .core.tunnel import TunnelServer
 from .tools.local_llm import build_llm_tool
 from .tools.shell import build_shell_tool
 from .tools.smart import build_compute_tool
@@ -53,8 +56,6 @@ PLUGIN_NAME = "astrbot_plugin_remote_link"
 
 # v0.2.0 起将插件、代理、协议版本显式分离，握手时用于兼容性判断。
 PLUGIN_VERSION = "0.2.0"
-PROTOCOL_VERSION = 2
-MIN_PROTOCOL_VERSION = 1  # 仍兼容 v0.1.x 的 v1 消息
 
 # 产物扩展名 → MIME（Web 预览用）
 EXT_MIME = {
@@ -184,10 +185,6 @@ DEFAULT_ANALYZE_PROMPT = """你是 ComfyUI 工作流分析专家。根据每个�
 5. summary 用中文一句话说清楚它生成什么；tags 给 3~6 个概括用途的中文标签（如 动漫、写实、放大、修复、风格转绘）。"""
 
 
-class RemoteLinkError(Exception):
-    """隧道调用过程中的业务错误，消息内容会直接展示给用户。"""
-
-
 def pick_subtype(kind: str, n_images: int, intent: str) -> str:
     """子分类规则（纯函数）：手动关键词 > 图数规则（带图→图生类，多图→多图生视频）。
 
@@ -218,19 +215,8 @@ class RemoteLinkPlugin(Star):
         super().__init__(context)
         self.config = config
 
-        # v0.2.0 安全基线：禁止空 token 裸奔。首次启动自动生成随机 token 并持久化。
-        self._ensure_auth_token()
-
-        # ---- 基础限流状态（内存滑动窗口，足够抵御脚本滥用）----
-        self._rate_hits: dict[str, deque] = {}  # "method path ip" -> deque[timestamp]
-
-        # ---- 隧道状态 ----
-        self._ws = None  # 当前本地代理的 WebSocket 连接（同一时刻只允许一个代理在线）
-        self._pending = {}  # rid -> asyncio.Future，等待本地代理的响应
-        self._chunk_cbs = {}  # rid -> callable，SSE 流式响应的分块回调
-        self._agent_info = {}  # 本地代理 hello 消息里上报的机器信息
-        self._agent_connected_at = 0.0
-        self._run_progress: dict | None = None  # 当前执行任务的实时进度（来自隧道 progress 消息）
+        # v0.2.0 安全基线：禁止空 token 裸奔。TunnelServer 负责自动生成与校验。
+        self.tunnel = TunnelServer(config)
 
         # ---- 内嵌 HTTP 服务（隧道入口 + OpenAI 兼容代理）----
         self._runner = None
@@ -275,37 +261,12 @@ class RemoteLinkPlugin(Star):
     # ==================== 安全基础 ====================
 
     def _ensure_auth_token(self) -> str:
-        """保证插件一定存在非空 auth_token（v0.2.0 P0）。"""
-        token = str(self.config.get("auth_token") or "").strip()
-        if token:
-            return token
-        token = secrets.token_urlsafe(32)
-        self.config["auth_token"] = token
-        save = getattr(self.config, "save_config", None)
-        try:
-            if callable(save):
-                save()
-                logger.warning("[remote_link] 检测到 auth_token 为空，已自动生成并保存随机 token")
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"[remote_link] auth_token 为空，已生成随机 token 但保存配置失败: {e}")
-        return token
-
-    def _rate_limit_key(self, request) -> str:
-        ip = getattr(request, "remote", None) or "unknown"
-        path = getattr(request, "path", None) or "/"
-        return f"{path} {ip}"
+        """保证插件一定存在非空 auth_token（v0.2.0 P0），委托 TunnelServer。"""
+        return self.tunnel.auth_token
 
     def _check_rate_limit(self, request, limit: int = 60, window: int = 60) -> bool:
-        """极简滑动窗口限流。返回 False 表示应拒绝。"""
-        key = self._rate_limit_key(request)
-        now = time.time()
-        q = self._rate_hits.setdefault(key, deque())
-        while q and q[0] < now - window:
-            q.popleft()
-        if len(q) >= limit:
-            return False
-        q.append(now)
-        return True
+        """极简滑动窗口限流，委托 TunnelServer。"""
+        return self.tunnel.check_rate_limit(request, limit=limit, window=window)
 
     def _media_signature(self, filename: str, expires: int) -> str:
         secret = str(self._ensure_auth_token())
@@ -399,29 +360,27 @@ class RemoteLinkPlugin(Star):
         logger.info("[remote_link] 云端控制台页面已注册（概览/工作流/设置）")
 
     async def _api_overview_snapshot(self):
-        connected = self._ws is not None and not self._ws.closed
-        info: dict = {}
+        connected = self.tunnel.connected
+        info: dict = self.tunnel.agent_info or {}
         # 在线时取一次实时信息（带超时保护，失败则退回连接时缓存）
         if connected:
             try:
                 info = await self._call_local("info", {}, timeout=8) or {}
             except RemoteLinkError:
-                info = dict(self._agent_info or {})
-        else:
-            info = dict(self._agent_info or {})
+                info = self.tunnel.agent_info or {}
         comfy = info.get("comfyui") or {}
         oai = info.get("openai") or {}
         return json_response(
             {
-                "version": "0.1.0",
+                "version": PLUGIN_VERSION,
                 "agents": [
                     {
                         "id": "default",
                         "name": info.get("hostname") or "本地代理",
                         "connected": connected,
                         "connected_seconds": (
-                            int(time.time() - self._agent_connected_at)
-                            if connected and self._agent_connected_at
+                            int(time.time() - self.tunnel.agent_connected_at)
+                            if connected and self.tunnel.agent_connected_at
                             else 0
                         ),
                         "hostname": info.get("hostname"),
@@ -439,7 +398,7 @@ class RemoteLinkPlugin(Star):
                         },
                     }
                 ],
-                "pending_requests": len(self._pending),
+                "pending_requests": self.tunnel.pending_count,
                 "server_port": int(self.config.get("server_port", 8468)),
                 "progress": self._fresh_progress(),
                 "capabilities": await self._api_capabilities_summary(),
@@ -602,11 +561,11 @@ class RemoteLinkPlugin(Star):
         async def events():
             try:
                 while True:
-                    connected = self._ws is not None and not self._ws.closed
+                    connected = self.tunnel.connected
                     snap = {
                         "t": time.time(),
                         "connected": connected,
-                        "pending_requests": len(self._pending),
+                        "pending_requests": self.tunnel.pending_count,
                         "progress": self._fresh_progress(),
                         "enhance_streams": self._fresh_enhance_streams(),
                     }
@@ -628,7 +587,7 @@ class RemoteLinkPlugin(Star):
 
     def _fresh_progress(self) -> dict | None:
         """当前任务进度（超过 30 秒没更新视为结束，返回 None）。"""
-        p = self._run_progress
+        p = self.tunnel.progress
         if p and time.time() - float(p.get("updated_at") or 0) < 30:
             return {
                 "text": p.get("text", ""),
@@ -1223,7 +1182,7 @@ class RemoteLinkPlugin(Star):
         host = str(self.config.get("server_host", "0.0.0.0"))
         port = int(self.config.get("server_port", 8468))
         app = web.Application()
-        app.router.add_get("/ws", self._handle_ws)
+        app.router.add_get("/ws", self.tunnel.handle_ws)
         app.router.add_post("/v1/chat/completions", self._handle_chat_completions)
         app.router.add_get("/v1/models", self._handle_models)
         app.router.add_get("/healthz", self._handle_healthz)
@@ -1256,218 +1215,31 @@ class RemoteLinkPlugin(Star):
             if self._runner is runner:
                 self._runner = None
 
-    # ==================== 认证与 WebSocket 隧道 ====================
+    # ==================== 认证与 WebSocket 隧道（委托 TunnelServer） ====================
 
     def _authorized(self, request) -> bool:
         """统一鉴权：默认 Bearer Token；旧版 ?token= 仅作 deprecated 兼容。"""
-        token = self._ensure_auth_token()
-        if request.headers.get("Authorization", "") == f"Bearer {token}":
-            return True
-        # 旧版 URL Query 兼容（v0.2.0 标记为 deprecated，仍允许平滑升级）
-        if request.query.get("token") == token:
-            return True
-        return False
-
-    async def _handle_ws(self, request):
-        """WebSocket 隧道入口：本地代理拨入后保持长连接。"""
-        if not self._check_rate_limit(request, limit=60, window=60):
-            return web.Response(status=429, text="too many requests")
-        if not self._authorized(request):
-            return web.Response(status=401, text="unauthorized")
-        # heartbeat：让 aiohttp 自动回复客户端 ping（agent 端 ws_connect(heartbeat=30)
-        # 会周期发 ping，服务器不回 pong 会被客户端 15s 判死 → 频繁断连）。
-        # 心跳间隔 15s：更频繁探测/维持连接，减少网络抖动导致的误判断连。
-        ws = web.WebSocketResponse(max_msg_size=256 * 1024 * 1024, heartbeat=15)
-        await ws.prepare(request)
-
-        # 同一时刻只允许一个本地代理在线：新连接顶掉旧连接
-        old = self._ws
-        if old is not None and not old.closed:
-            try:
-                await old.close(code=4001, message=b"replaced by new connection")
-            except Exception:  # noqa: BLE001
-                pass
-            self._fail_all_pending("本地代理已重连，旧请求被取消")
-        self._ws = ws
-        logger.info(f"[remote_link] 本地代理已连接: {request.remote}")
-
-        try:
-            async for msg in ws:
-                if msg.type == web.WSMsgType.TEXT:
-                    await self._on_ws_text(msg.data)
-                elif msg.type == web.WSMsgType.ERROR:
-                    logger.error(f"[remote_link] WebSocket 错误: {ws.exception()}")
-                    break
-                elif msg.type == web.WSMsgType.CLOSE:
-                    logger.info(f"[remote_link] 客户端关闭连接: {msg.data}")
-                    break
-                elif msg.type == web.WSMsgType.CLOSING:
-                    break
-        except asyncio.CancelledError:
-            logger.info("[remote_link] WS 循环被取消（插件停止/重载）")
-            raise
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[remote_link] WS 连接异常断开: {type(e).__name__}: {e}")
-        finally:
-            if self._ws is ws:
-                self._ws = None
-            self._fail_all_pending("本地代理连接已断开")
-            logger.info("[remote_link] 本地代理已断开")
-        return ws
-
-    async def _on_ws_text(self, raw: str):
-        """处理本地代理发来的消息：hello / response / stream_chunk / progress。"""
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return
-        mtype = data.get("type")
-        if mtype == "hello":
-            self._agent_info = data.get("data") or {}
-            self._agent_connected_at = time.time()
-            self._agent_info["agent_version"] = data.get("agent_version")
-            self._agent_info["protocol_version"] = data.get("v")
-            self._agent_info["capabilities"] = data.get("capabilities") or []
-            self._agent_info["machine"] = data.get("machine") or {}
-            info = self._agent_info
-            proto = data.get("v")
-            try:
-                proto = int(proto or 1)
-            except (TypeError, ValueError):
-                proto = 1
-            if proto < MIN_PROTOCOL_VERSION or proto > PROTOCOL_VERSION:
-                logger.error(
-                    f"[remote_link] 代理协议版本 {proto} 不受支持（需 {MIN_PROTOCOL_VERSION}-{PROTOCOL_VERSION}）"
-                )
-                self._agent_info["protocol_error"] = (
-                    f"Protocol version {proto} is not supported. Server requires protocol >=2."
-                )
-            elif proto == 1:
-                logger.info("[remote_link] 检测到 v1 旧协议，按兼容模式继续")
-            hostname = (
-                info.get("hostname")
-                or (info.get("machine") or {}).get("name")
-                or "unknown"
-            )
-            platform_name = (
-                info.get("platform")
-                or (info.get("machine") or {}).get("os")
-                or "unknown"
-            )
-            logger.info(
-                f"[remote_link] 代理 hello v{proto}: {hostname} ({platform_name}) "
-                f"capabilities={','.join(self._agent_info.get('capabilities') or [])}"
-            )
-        elif mtype == "response":
-            fut = self._pending.pop(data.get("id"), None)
-            if fut is not None and not fut.done():
-                fut.set_result(data)
-        elif mtype == "stream_chunk":
-            cb = self._chunk_cbs.get(data.get("id"))
-            if cb is not None:
-                try:
-                    cb(data.get("data", ""))
-                except Exception as e:  # noqa: BLE001
-                    logger.error(f"[remote_link] 流式回调异常: {e}")
-        elif mtype == "progress":
-            # 代理上报的进度：新协议为结构化 dict（text/percent/node/node_type），
-            # 老协议为纯文本（如 "ComfyUI 进度 40%（pid）"），两种都兼容。
-            raw_p = data.get("data")
-            if isinstance(raw_p, dict):
-                text = str(raw_p.get("text") or "")
-                pct = raw_p.get("percent")
-                node = str(raw_p.get("node") or "") or None
-                node_type = str(raw_p.get("node_type") or "") or None
-            else:
-                text = str(raw_p or "")
-                m = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
-                pct = float(m.group(1)) if m else None
-                node = node_type = None
-            self._run_progress = {
-                "text": text[:200],
-                "percent": pct,
-                "node": node,
-                "node_type": node_type,
-                "rid": str(data.get("id") or ""),
-                "updated_at": time.time(),
-            }
-            logger.info(f"[remote_link] 本地进度: {text}")
-
-    def _fail_all_pending(self, reason: str):
-        """连接断开时把所有等待中的请求全部以异常结束，避免调用方永久挂起。"""
-        for _rid, fut in list(self._pending.items()):
-            if not fut.done():
-                fut.set_exception(RemoteLinkError(reason))
-        self._pending.clear()
-        self._chunk_cbs.clear()
-
-    # ==================== 隧道请求封装 ====================
-
-    def _ensure_connected(self):
-        if self._ws is None or self._ws.closed:
-            raise RemoteLinkError("本地代理未连接：请先在你本地电脑上运行 agent/local_agent.py")
-
-    async def _send_request(self, service: str, payload: dict):
-        """向本地代理发送请求，返回 (rid, future)。"""
-        self._ensure_connected()
-        rid = uuid.uuid4().hex
-        fut = asyncio.get_running_loop().create_future()
-        self._pending[rid] = fut
-        try:
-            await self._ws.send_str(
-                json.dumps(
-                    {"type": "request", "id": rid, "service": service, "payload": payload},
-                    ensure_ascii=False,
-                )
-            )
-        except Exception as e:  # noqa: BLE001
-            self._pending.pop(rid, None)
-            raise RemoteLinkError(f"向本地代理发送请求失败: {e}") from None
-        return rid, fut
+        return self.tunnel.authorized(request)
 
     async def _call_local(self, service: str, payload: dict, timeout: float | None = None) -> dict:
         """发起一次隧道请求并等待结果（请求-响应模式）。"""
-        timeout = timeout if timeout is not None else float(self.config.get("request_timeout", 300))
-        rid, fut = await self._send_request(service, payload)
-        try:
-            resp = await asyncio.wait_for(fut, timeout)
-        except asyncio.TimeoutError:
-            raise RemoteLinkError(
-                f"本地代理响应超时（>{int(timeout)} 秒），任务可能仍在本地继续执行"
-            ) from None
-        finally:
-            self._pending.pop(rid, None)
-        if not isinstance(resp, dict) or not resp.get("ok"):
-            err = "未知错误"
-            if isinstance(resp, dict):
-                err = resp.get("error") or err
-            raise RemoteLinkError(str(err))
-        return resp.get("result") or {}
+        return await self.tunnel.request(service, payload, timeout=timeout)
 
     async def _call_local_stream(self, service, payload, on_chunk, timeout=None) -> dict:
         """隧道流式调用：每个 SSE 分块到达时调用 on_chunk(text)。"""
-        timeout = timeout if timeout is not None else float(self.config.get("request_timeout", 300))
-        rid, fut = await self._send_request(service, payload)
-        self._chunk_cbs[rid] = on_chunk
-        try:
-            resp = await asyncio.wait_for(fut, timeout)
-        except asyncio.TimeoutError:
-            raise RemoteLinkError(f"本地代理响应超时（>{int(timeout)} 秒）") from None
-        finally:
-            self._pending.pop(rid, None)
-            self._chunk_cbs.pop(rid, None)
-        if not isinstance(resp, dict) or not resp.get("ok"):
-            err = "未知错误"
-            if isinstance(resp, dict):
-                err = resp.get("error") or err
-            raise RemoteLinkError(str(err))
-        return resp.get("result") or {}
+        return await self.tunnel.request_stream(service, payload, on_chunk, timeout=timeout)
+
+    def _ensure_connected(self):
+        self.tunnel.ensure_connected()
+
+    def _fail_all_pending(self, reason: str):
+        self.tunnel.fail_all_pending(reason)
 
     # ==================== OpenAI 兼容 HTTP 代理（把本地 LLM 变成 AstrBot 的提供商） ====================
 
     async def _handle_healthz(self, request):
         return web.json_response(
-            {"ok": True, "agent_connected": self._ws is not None and not self._ws.closed}
+            {"ok": True, "agent_connected": self.tunnel.connected}
         )
 
     async def _http_submit(self, request):
@@ -3502,8 +3274,8 @@ class RemoteLinkPlugin(Star):
             lines.append(f"🤖 本地 LLM(OpenAI兼容): ✅ 在线 | 模型: {', '.join(models[:8])}")
         else:
             lines.append(f"🤖 本地 LLM: ❌ {oai.get('error', '离线')}")
-        if self._agent_connected_at:
-            lines.append(f"⏱️ 已连接 {int(time.time() - self._agent_connected_at)} 秒")
+        if self.tunnel.agent_connected_at:
+            lines.append(f"⏱️ 已连接 {int(time.time() - self.tunnel.agent_connected_at)} 秒")
         yield event.plain_result("\n".join(lines))
 
     @remote.command("ping")

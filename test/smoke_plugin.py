@@ -289,10 +289,10 @@ async def main():
     agent_task = asyncio.ensure_future(fake_agent(f"ws://127.0.0.1:{port}/ws?token=test-token-123", stop))
     # 等代理拨入
     for _ in range(50):
-        if plugin._ws is not None and not plugin._ws.closed:
+        if plugin.tunnel.connected:
             break
         await asyncio.sleep(0.1)
-    assert plugin._ws is not None, "假代理未能连接"
+    assert plugin.tunnel.connected, "假代理未能连接"
     if agent_task.done():
         agent_task.result()
 

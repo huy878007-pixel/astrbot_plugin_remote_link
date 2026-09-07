@@ -8,22 +8,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "test" / "stubs"))
 sys.path.insert(0, str(ROOT.parent))
 
-from astrbot_plugin_remote_link.main import PROTOCOL_VERSION, RemoteLinkPlugin  # noqa: E402
-
-
-def make_plugin():
-    p = RemoteLinkPlugin.__new__(RemoteLinkPlugin)
-    p._pending = {}
-    p._chunk_cbs = {}
-    p._run_progress = None
-    p._agent_info = {}
-    p._agent_connected_at = 0.0
-    return p
+from astrbot_plugin_remote_link.main import PROTOCOL_VERSION  # noqa: E402
+from astrbot_plugin_remote_link.core.tunnel import TunnelServer  # noqa: E402
 
 
 async def main():
     assert PROTOCOL_VERSION == 2
-    p = make_plugin()
+    tunnel = TunnelServer({"auth_token": "test-token"})
     hello = {
         "type": "hello",
         "v": 2,
@@ -32,12 +23,14 @@ async def main():
         "capabilities": ["image.generate", "llm.chat"],
         "data": {"hostname": "DESKTOP-X", "platform": "Windows 11"},
     }
-    await p._on_ws_text(json.dumps(hello))
-    assert p._agent_info["protocol_version"] == 2
-    assert p._agent_info["agent_version"] == "0.2.0"
-    assert p._agent_info["capabilities"] == ["image.generate", "llm.chat"]
-    assert p._agent_info["machine"]["name"] == "DESKTOP-X"
-    assert p._agent_info.get("hostname") == "DESKTOP-X"
+    await tunnel.handle_text(json.dumps(hello))
+    agent = tunnel.current_agent
+    assert agent is not None
+    assert agent.protocol_version == 2
+    assert agent.agent_version == "0.2.0"
+    assert agent.capabilities == ["image.generate", "llm.chat"]
+    assert agent.machine["name"] == "DESKTOP-X"
+    assert agent.info.get("hostname") == "DESKTOP-X"
     print("PROTOCOL V2 PASS")
 
 

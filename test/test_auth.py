@@ -8,13 +8,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "test" / "stubs"))
 sys.path.insert(0, str(ROOT.parent))
 
+from astrbot_plugin_remote_link.core.tunnel import TunnelServer
 from astrbot_plugin_remote_link.main import RemoteLinkPlugin  # noqa: E402
 
 
 def make_plugin(token="test-token-123"):
     p = RemoteLinkPlugin.__new__(RemoteLinkPlugin)
     p.config = {"auth_token": token}
-    p._rate_hits = {}
+    p.tunnel = TunnelServer(p.config)
     return p
 
 
@@ -34,7 +35,7 @@ def test_empty_token_is_generated_not_open():
     # config 只有空 token：调用鉴权必须先生成随机 token，不能放行
     p = RemoteLinkPlugin.__new__(RemoteLinkPlugin)
     p.config = {"auth_token": ""}
-    p._rate_hits = {}
+    p.tunnel = TunnelServer(p.config)
     req = fake_request(headers={})
     assert p._authorized(req) is False, "空 token 不得放行未认证请求"
     assert len(str(p.config.get("auth_token") or "")) >= 32
