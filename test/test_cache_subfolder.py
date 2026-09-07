@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "test" / "stubs"))
 sys.path.insert(0, str(ROOT.parent))  # 让 astrbot_plugin_remote_link 包可导入
 
 from astrbot_plugin_remote_link.main import RemoteLinkPlugin  # noqa: E402
+from astrbot_plugin_remote_link.services.media import MediaService  # noqa: E402
 
 CACHE = Path(tempfile.mkdtemp(prefix="yunxin_cache_test_"))
 
@@ -20,6 +21,13 @@ class _P(RemoteLinkPlugin):
     def __init__(self):
         self._media_dir = CACHE
         self.requests = []
+        self.media = MediaService(
+            CACHE,
+            {},
+            token_provider=lambda: "test-token",
+            fetch_stream=self._call_local_stream,
+            container_ip_provider=lambda: "127.0.0.1",
+        )
 
     async def _call_local_stream(self, service, payload, on_chunk=None, timeout=300):
         self.requests.append(payload)

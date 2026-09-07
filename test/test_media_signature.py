@@ -10,12 +10,14 @@ sys.path.insert(0, str(ROOT.parent))
 
 from astrbot_plugin_remote_link.core.tunnel import TunnelServer
 from astrbot_plugin_remote_link.main import RemoteLinkPlugin  # noqa: E402
+from astrbot_plugin_remote_link.services.media import MediaService  # noqa: E402
 
 
 def test_signed_media_url_roundtrip():
     p = RemoteLinkPlugin.__new__(RemoteLinkPlugin)
     p.config = {"auth_token": "secret-token"}
     p.tunnel = TunnelServer(p.config)
+    p.media = MediaService(Path(".") / "tmp_media_test", p.config, token_provider=lambda: p.tunnel.auth_token)
     url = p._signed_media_url("sub/folder/../../evil.png", ttl=300)
     assert "/media?" in url and "sig=" in url and "expires=" in url
     # 文件名取 basename，目录穿越被去除

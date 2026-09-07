@@ -10,12 +10,14 @@ sys.path.insert(0, str(ROOT.parent))
 
 from astrbot_plugin_remote_link.core.tunnel import TunnelServer
 from astrbot_plugin_remote_link.main import RemoteLinkPlugin  # noqa: E402
+from astrbot_plugin_remote_link.services.media import MediaService  # noqa: E402
 
 
 def make_plugin(token="test-token-123"):
     p = RemoteLinkPlugin.__new__(RemoteLinkPlugin)
     p.config = {"auth_token": token}
     p.tunnel = TunnelServer(p.config)
+    p.media = MediaService(Path(".") / "tmp_auth_test", p.config, token_provider=lambda: p.tunnel.auth_token)
     return p
 
 

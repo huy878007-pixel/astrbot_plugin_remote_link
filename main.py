@@ -49,6 +49,7 @@ from .core.exceptions import RemoteLinkError
 from .core.protocol import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
 from .core.task_manager import TaskManager
 from .core.tunnel import TunnelServer
+from .services.media import MediaService
 from .tools.local_llm import build_llm_tool
 from .tools.shell import build_shell_tool
 from .tools.smart import build_compute_tool
@@ -223,8 +224,15 @@ class RemoteLinkPlugin(Star):
         self._runner = None
         self._server_task = None
 
-        # ---- 数据目录 ----
+        # ---- 数据目录 / Media Service ----
         self._media_dir = _plugin_data_dir() / "media"
+        self.media = MediaService(
+            self._media_dir,
+            self.config,
+            token_provider=lambda: self.tunnel.auth_token,
+            fetch_stream=self._call_local_stream,
+            container_ip_provider=_container_ip,
+        )
 
         # ---- 任务队列（异步执行：工具立即返回，后台完成后再主动推送）----
         self.tasks = TaskManager()
@@ -266,34 +274,14 @@ class RemoteLinkPlugin(Star):
         return self.tunnel.check_rate_limit(request, limit=limit, window=window)
 
     def _media_signature(self, filename: str, expires: int) -> str:
-        secret = str(self._ensure_auth_token())
-        msg = f"{filename}:{expires}".encode("utf-8")
-        return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+        return self.media.signature(filename, expires)
 
     def _verify_media_signature(self, request) -> bool:
-        filename = request.query.get("filename", "").strip()
-        expires = request.query.get("expires", "").strip()
-        sig = request.query.get("sig", "").strip()
-        if not filename or not expires or not sig:
-            return False
-        try:
-            expires_int = int(expires)
-        except ValueError:
-            return False
-        if expires_int < time.time():
-            return False
-        expected = self._media_signature(Path(filename).name, expires_int)
-        return hmac.compare_digest(expected, sig)
+        return self.media.verify_signature(request)
 
     def _signed_media_url(self, filename: str, ttl: int = 1800) -> str:
         """生成短期有效的 /media 签名 URL（默认 30 分钟）。"""
-        from urllib.parse import urlencode
-
-        name = Path(filename).name
-        expires = int(time.time()) + ttl
-        sig = self._media_signature(name, expires)
-        qs = urlencode({"filename": name, "expires": expires, "sig": sig})
-        return f"http://{_container_ip()}:8468/media?{qs}"
+        return self.media.signed_url(filename, ttl=ttl)
 
     # ==================== 工具注册 ====================
 
@@ -1439,129 +1427,20 @@ class RemoteLinkPlugin(Star):
     # ==================== 业务逻辑：工作流执行 / 本地 LLM / Shell ====================
 
     def _save_media(self, files: list[dict]) -> list[dict]:
-        """记录隧道回传的产物元数据，返回 [{kind, path, filename, mime, ...}]。
-
-        - 新代理：响应不带 base64（避免大消息被截断），path 留空，发送/预览时按需 _pull_media 从本地拉取；
-        - 旧代理：响应带 base64，这里直接落盘。
-        """
-        saved = []
-        for f in files:
-            filename = Path(str(f.get("filename") or f"{uuid.uuid4().hex}.bin")).name
-            entry = {
-                "kind": f.get("kind") or "image",
-                "path": "",
-                "filename": filename,
-                "mime": f.get("mime") or "",
-                "subfolder": f.get("subfolder", ""),
-                "type": f.get("type", "output"),
-                "node": f.get("node", ""),
-                "node_type": f.get("node_type", ""),
-                "index": f.get("index", 0),
-                "main": bool(f.get("main")),
-            }
-            b64 = f.get("base64") or ""
-            if b64:
-                try:
-                    data = base64.b64decode(b64)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(f"[remote_link] 产物 {filename} base64 解码失败: {e}（长度 {len(b64)}）")
-                    continue
-                logger.info(f"[remote_link] 产物落盘 {filename}: kind={entry['kind']} base64_len={len(b64)} bytes={len(data)}")
-                self._media_dir.mkdir(parents=True, exist_ok=True)
-                path = self._media_dir / filename
-                path.write_bytes(data)
-                entry["path"] = str(path)
-            saved.append(entry)
-        if saved:
-            self._prune_media()
-        return saved
+        """记录隧道回传的产物元数据，返回 [{kind, path, filename, mime, ...}]。"""
+        return self.media.save_media(files)
 
     def _prune_media(self):
-        """性能/存储优化：媒体目录自动清理。
-
-        - inputs/ 下的临时参考图（Web/本地 GUI 上传）：任务完成后最多保留最近 10 个；
-        - 产物文件总数超上限（默认 100）时，删除最旧的（按修改时间），保留最近产物。
-        """
-        try:
-            if not self._media_dir.is_dir():
-                return
-            # 1) inputs 临时图
-            in_dir = self._media_dir / "inputs"
-            if in_dir.is_dir():
-                tmp = sorted(in_dir.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
-                for p in tmp[10:]:
-                    try: p.unlink()
-                    except Exception:  # noqa: BLE001
-                        pass
-            # 2) 产物总数限制
-            files = [p for p in self._media_dir.glob("*") if p.is_file() and p.parent == self._media_dir]
-            limit = int(self.config.get("media_max_files", 100) or 100)
-            if len(files) > limit:
-                for p in sorted(files, key=lambda p: p.stat().st_mtime)[: len(files) - limit]:
-                    try: p.unlink()
-                    except Exception:  # noqa: BLE001
-                        pass
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[remote_link] 媒体清理失败: {e}")
+        """性能/存储优化：媒体目录自动清理。"""
+        self.media.prune_media()
 
     async def _pull_media(self, f: dict) -> dict:
-        """按需从本地代理拉取产物文件并落盘（幂等：已落盘直接返回）。
-
-        用户选择发送时才把真实文件从本地电脑经隧道分块拉回，避免大消息传输失败，
-        也保证发送的是本地原文件而非可能损坏的缓存。返回带 path 的 f。
-        """
-        if f.get("path") and Path(str(f["path"])).is_file():
-            return f
-        filename = str(f.get("filename") or "")
-        if not filename:
-            return f
-        # 缓存 key 必须含 subfolder：不同子目录可能产出同名文件（如 Anima_v7 与
-        # Anima_v10 都有 精修完成_yyyy-MM-dd_00017_.png），只按文件名缓存会把
-        # 先到的 v7 图误当成 v10 的产物发出去（群里收到的和本地跑的不是同一张）。
-        subfolder = str(f.get("subfolder") or "")
-        safe = Path(filename).name
-        cache_name = f"{subfolder.replace('/', '_')}__{safe}" if subfolder else safe
-        path = self._media_dir / cache_name
-        if path.is_file():
-            f["path"] = str(path)
-            return f
-        chunks: list[str] = []
-        try:
-            await self._call_local_stream(
-                "media_get",
-                {
-                    "filename": filename,
-                    "subfolder": f.get("subfolder", ""),
-                    "type": f.get("type", "output"),
-                },
-                on_chunk=lambda t: chunks.append(t),
-                timeout=300,
-            )
-        except RemoteLinkError as e:
-            logger.warning(f"[remote_link] 拉取产物 {filename} 失败: {e}")
-            return f
-        b64 = "".join(chunks)
-        try:
-            data = base64.b64decode(b64)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"[remote_link] 产物 {filename} base64 解码失败: {e}（总长 {len(b64)}）")
-            return f
-        logger.info(f"[remote_link] 拉取产物 {filename}: b64_len={len(b64)} bytes={len(data)}")
-        self._media_dir.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        f["path"] = str(path)
-        return f
+        """按需从本地代理拉取产物文件并落盘（幂等：已落盘直接返回）。"""
+        return await self.media.pull_media(f)
 
     def _media_captions(self, files: list[dict]) -> list[str]:
         """多产物时的编号说明（主产物优先已在代理端排好序）。"""
-        if len(files) <= 1:
-            return []
-        lines = [f"📎 本次共 {len(files)} 个产物："]
-        for i, f in enumerate(files, 1):
-            tag = " ⭐主产物" if f.get("main") else ""
-            node = f.get("node_type") or f.get("node") or ""
-            lines.append(f"{i}) {f.get('filename', '?')}（{node}）{tag}")
-        return lines
+        return self.media.media_captions(files)
 
     def _media_results(self, event: AstrMessageEvent, files: list[dict]):
         """把产物列表转成 AstrBot 的消息结果（图片 / 视频 / 音频组件）。"""
@@ -1569,13 +1448,8 @@ class RemoteLinkPlugin(Star):
             yield from self._yield_media_result(event, f)
 
     def _media_file_url(self, filename: str) -> str:
-        """产物媒体 URL（NapCat 从 URL 下载视频用）。
-
-        OneBot 11 要求 file 字段为 file:/// 或 http url；NapCat 读不到 AstrBot 容器内
-        路径（ENOENT），但能访问 Docker 内网。故用内嵌 HTTP(8468) + 容器内网 IP。
-        v0.2.0 起 URL 带短期 HMAC 签名，默认 30 分钟过期。
-        """
-        return self._signed_media_url(Path(filename).name)
+        """产物媒体 URL（NapCat 从 URL 下载视频用）。"""
+        return self.media.file_url(filename)
 
     async def _send_media_to_origin(self, origin: str, files: list[dict]) -> bool:
         """把产物直接发送到指定会话（不依赖事件对象，供 Web 控制台"发送到QQ"用）。"""
