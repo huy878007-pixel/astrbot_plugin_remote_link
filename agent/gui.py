@@ -489,10 +489,43 @@ class YunxinGui:
         btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
         tb.Button(btns, text="💾 保存配置", bootstyle="primary", command=self._save_brain_config).pack(side="left")
         tb.Button(btns, text="🔌 测试连接", bootstyle="info-outline", command=self._run_brain_test).pack(side="left", padx=(8, 0))
+        tb.Button(btns, text="📥 填入本地模型", bootstyle="secondary-outline", command=self._adopt_local_model).pack(side="left", padx=(8, 0))
+
+        self._load_brain_form()
 
         self.env_text = tk.Text(inner, bg="#0a0e1a", fg="#c9d4f0", font=("Consolas", 10),
                                 relief="flat", height=22, wrap="word")
         self.env_text.pack(fill="both", expand=True, padx=12, pady=8)
+
+    def _load_brain_form(self):
+        """从当前默认 Brain Profile 回填 GUI 表单（API Key 仍掩码显示）。"""
+        try:
+            cfg = load_config()
+            from brain.profiles import get_default_profile, normalize_brain_config
+            normalize_brain_config(cfg)
+            p = get_default_profile(cfg)
+            if p:
+                self.brain_url_var.set(p.base_url or "")
+                self.brain_model_var.set(p.model or "")
+                self.brain_key_var.set(p.api_key or "")
+        except Exception as e:  # noqa: BLE001
+            self._log_line(f"Brain 配置回填失败: {e}")
+
+    def _adopt_local_model(self):
+        """从当前 Environment Snapshot 中选取第一个在线 LLM 模型填入 Brain 表单，不自动保存。"""
+        if not self.agent:
+            self._log_line("代理尚未启动，无法读取本地模型")
+            return
+        from brain.profiles import first_local_model
+        picked = first_local_model(self.agent.snapshot().get("environment") or {})
+        if picked:
+            base_url, model, provider_type = picked
+            self.brain_url_var.set(base_url)
+            self.brain_model_var.set(model)
+            self.brain_key_var.set(self.brain_key_var.get() or "")
+            self._log_line(f"已填入本地模型：{model} @ {base_url}（{provider_type}）")
+        else:
+            self._log_line("未发现可用的本地 LLM 模型")
 
     def _save_brain_config(self):
         cfg = load_config()
@@ -509,6 +542,7 @@ class YunxinGui:
         p0["timeout"] = 60
         cfg["brain"]["enabled"] = bool(p0["base_url"])
         cfg["brain"]["default_profile"] = "default"
+        cfg["brain"]["last_test_ok"] = False
         try:
             cfg_path = Path(app_dir()) / "agent_config.json"
             cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -544,10 +578,27 @@ class YunxinGui:
         threading.Thread(target=worker, daemon=True).start()
 
     def _show_brain_test_result(self, result):
+        self._set_brain_test_ok(bool(result.get("ok")))
         if result.get("ok"):
-            messagebox.showinfo(APP_NAME, "✓ API 可访问" + chr(92) + "n✓ 模型可用" + chr(92) + "n响应正常")
+            messagebox.showinfo(APP_NAME, "✓ API 可访问" + chr(10) + "✓ 模型可用" + chr(10) + "响应正常")
         else:
-            messagebox.showerror(APP_NAME, f"连接失败：{result.get('category', 'unknown')} " + chr(92) + "n{result.get('message', '')}")
+            messagebox.showerror(
+                APP_NAME,
+                "连接失败：" + str(result.get('category', 'unknown')) + chr(10) + str(result.get('message', '')),
+            )
+
+    def _set_brain_test_ok(self, ok: bool):
+        try:
+            cfg = load_config()
+            from brain.profiles import normalize_brain_config
+            normalize_brain_config(cfg)
+            cfg["brain"]["last_test_ok"] = bool(ok)
+            cfg_path = Path(app_dir()) / "agent_config.json"
+            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            if self.agent:
+                self.agent.cfg = cfg
+        except Exception:  # noqa: BLE001
+            pass
 
     def _request_env_rescan(self):
         if self.agent:

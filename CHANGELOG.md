@@ -1,5 +1,14 @@
 # 变更日志
 
+## v0.2.0（2026-09-08）— Agent Experience Stabilization 3.1
+
+- hello v2 capabilities 改为只从 Capability Registry 取 ready 能力，删除服务在线猜测逻辑。
+- Environment Snapshot 支持轻量 Health Refresh：服务 ready → offline → ready 自动同步，不触发完整 Discovery。
+- GUI Brain 表单启动时回填默认 Profile；保存/重载不丢 URL/Model/API Key。
+- Brain 状态改为 not_configured / configured / ready：必须 Base URL + Model 非空才是 configured。
+- 本地模型“设为 Agent 大脑”支持一键填表，不自动保存。
+- 修复 Brain 测试结果换行显示为字面 `\n` 的问题。
+
 ## v0.2.0（2026-09-08）— Local Agent Experience & Local Brain Foundation
 
 - 协议错误提示改为真实支持范围：Unsupported protocol version X. Supported protocol versions: 1-2。

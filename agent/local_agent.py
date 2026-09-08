@@ -894,7 +894,7 @@ class LocalAgent:
     # ---------------- 主循环 ----------------
 
     async def _info_loop(self):
-        """每 30 秒刷新一次本机/服务状态；初始或收到重扫请求时生成 Environment Snapshot。"""
+        """每 30 秒刷新一次本机/服务状态；初始或收到重扫请求时做 Full Discovery。"""
         needs_scan = True
         while not self._stop_requested:
             try:
@@ -910,8 +910,86 @@ class LocalAgent:
                 if needs_scan:
                     self._environment_snapshot = await self.scan_environment()
                     needs_scan = False
+                else:
+                    self._environment_snapshot = self.refresh_environment_snapshot(self._last_info)
             except Exception:  # noqa: BLE001
                 pass
+
+    def ready_capability_ids(self) -> list[str]:
+        """当前 Capability Registry 中至少一个 provider 为 ready 的能力 ID。"""
+        ids: list[str] = []
+        for cid, items in self._registry.snapshot().items():
+            if any(item.get("status") == "ready" for item in items):
+                ids.append(cid)
+        return sorted(ids)
+
+    def refresh_environment_snapshot(self, info: dict | None = None) -> dict:
+        """轻量 Health Refresh：只更新已有 Snapshot 中的服务/能力/问题状态，不做 Full Discovery。"""
+        info = info if info is not None else (self._last_info or {})
+        snapshot = dict(self._environment_snapshot or {})
+        services = [dict(s) for s in (snapshot.get("services") or [])]
+
+        comfy = info.get("comfyui") or {}
+        oai = info.get("openai") or {}
+        ffmpeg = info.get("ffmpeg") or {}
+        oai_services = info.get("openai_services") or []
+
+        for svc in services:
+            if svc.get("type") == "comfyui":
+                svc["ok"] = bool(comfy.get("ok"))
+                svc["base_url"] = comfy.get("base_url") or svc.get("base_url", "")
+                if not svc.get("ok"):
+                    svc["error"] = comfy.get("error", "offline")
+            elif svc.get("type") == "llm":
+                matched = None
+                base = str(svc.get("base_url") or "").rstrip("/")
+                if base and base == str(oai.get("base_url") or "").rstrip("/"):
+                    matched = oai
+                else:
+                    for s2 in oai_services:
+                        if base and base == str(s2.get("base_url") or "").rstrip("/"):
+                            matched = s2
+                            break
+                if matched is not None:
+                    svc["ok"] = bool(matched.get("ok"))
+                    svc["models"] = matched.get("models") or []
+                    if not svc.get("ok"):
+                        svc["error"] = matched.get("error", "offline")
+                else:
+                    svc["ok"] = False
+                    svc["models"] = []
+                    svc["error"] = svc.get("error", "offline")
+            elif svc.get("type") == "ffmpeg" or svc.get("provider_type") == "ffmpeg":
+                svc["ok"] = bool(ffmpeg.get("ok"))
+                if ffmpeg.get("path"):
+                    svc["path"] = ffmpeg.get("path")
+                svc["version"] = ffmpeg.get("version", svc.get("version", ""))
+
+        snapshot["services"] = services
+        snapshot["capabilities"] = self._registry.snapshot()
+        snapshot["brain"] = self.brain_summary()
+        snapshot["issues"] = self._build_issues(info, services)
+        snapshot["health_checked_at"] = time.time()
+        self._environment_snapshot = snapshot
+        return snapshot
+
+    def _build_issues(self, info: dict, services: list[dict]) -> list[dict]:
+        """确定性问题列表，不调用 LLM。"""
+        issues: list[dict] = []
+        comfy = info.get("comfyui") or {}
+        oai = info.get("openai") or {}
+        ffmpeg = info.get("ffmpeg") or {}
+        if comfy.get("ok") and not any(
+            item.get("status") == "ready" and item.get("provider") == "comfyui"
+            for caps in self._registry.snapshot().values()
+            for item in caps
+        ):
+            issues.append({"severity": "warn", "message": "ComfyUI 在线，但尚未识别到可确认的工作流能力。"})
+        if oai.get("ok") and not (oai.get("models") or []):
+            issues.append({"severity": "warn", "message": "本地 LLM 服务在线，但没有可用模型。"})
+        if not ffmpeg.get("ok"):
+            issues.append({"severity": "info", "message": "FFmpeg 不可用，媒体转码能力未开启。"})
+        return issues
 
     async def run(self):
         if self._stop_requested:
@@ -957,11 +1035,7 @@ class LocalAgent:
             self._connected_at = time.time()
             info = await self.collect_info()
             self._last_info = info
-            capabilities = []
-            if (info.get("comfyui") or {}).get("ok"):
-                capabilities.extend(["image.generate", "image.edit", "video.generate"])
-            if (info.get("openai") or {}).get("ok"):
-                capabilities.append("llm.chat")
+            capabilities = self.ready_capability_ids()
             await self._send({
                 "type": "hello",
                 "v": PROTOCOL_VERSION,
@@ -2114,10 +2188,14 @@ class LocalAgent:
         brain = self.cfg.get("brain") or {}
         profile = get_default_profile(self.cfg)
         status = "not_configured"
-        if profile and profile.base_url:
-            status = "enabled" if brain.get("enabled") else "configured"
+        if profile and profile.base_url and profile.model:
+            if brain.get("last_test_ok"):
+                status = "ready"
+            else:
+                status = "enabled" if brain.get("enabled") else "configured"
         return {
             "enabled": bool(brain.get("enabled")),
+            "last_test_ok": bool(brain.get("last_test_ok")),
             "default_profile": brain.get("default_profile", "default"),
             "profile": {
                 "id": profile.id if profile else "",

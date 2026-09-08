@@ -72,6 +72,19 @@ def get_default_profile(cfg: dict) -> BrainProfile | None:
     return profiles[0] if profiles else None
 
 
+
+def first_local_model(snapshot: dict) -> tuple[str, str, str] | None:
+    """从 Environment Snapshot 中选取第一个在线 LLM 模型。"""
+    for svc in (snapshot or {}).get("services") or []:
+        if svc.get("type") == "llm" and svc.get("ok"):
+            models = svc.get("models") or []
+            if models:
+                return (
+                    str(svc.get("base_url") or ""),
+                    str(models[0]),
+                    str(svc.get("provider_type") or "openai_compatible"),
+                )
+    return None
 def save_profiles(cfg: dict, profiles: list[BrainProfile], brain: dict | None = None) -> None:
     """把 Profile 写回 cfg 内存对象；由 LocalAgent/GUI 负责持久化整个 config。"""
     cfg["llm_profiles"] = [p.to_dict() for p in profiles]

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "agent"))
 
 from brain.client import BrainClient
-from brain.profiles import BrainProfile, get_default_profile, load_profiles, normalize_brain_config, save_profiles
+from brain.profiles import BrainProfile, first_local_model, get_default_profile, load_profiles, normalize_brain_config, save_profiles
 
 
 class FakeResp:
@@ -91,8 +91,63 @@ async def test_connection_timeout():
     assert r["ok"] is False and r["category"] == "timeout", r
 
 
+
+def test_profile_roundtrip_preserves_fields():
+    cfg = {}
+    normalize_brain_config(cfg)
+    profile = BrainProfile(
+        id="default", name="默认 Agent 模型", provider_type="openai_compatible",
+        base_url="http://127.0.0.1:1234/v1", model="qwen2.5:7b", api_key="SECRET-KEY", timeout=60,
+    )
+    save_profiles(cfg, [profile], {"enabled": True, "default_profile": "default"})
+    loaded = load_profiles(cfg)[0]
+    assert loaded.base_url == profile.base_url
+    assert loaded.model == profile.model
+    assert loaded.api_key == profile.api_key
+
+
+def test_brain_summary_status():
+    from local_agent import LocalAgent
+
+    cfg = {
+        "server_url": "ws://127.0.0.1:1/ws",
+        "token": "t",
+        "comfyui": {"base_url": "http://127.0.0.1:8188", "userdata_dir": ""},
+        "openai": {"base_url": "", "api_key": "", "timeout": 5},
+        "shell": {"enabled": False, "allowed_patterns": []},
+        "llm_profiles": [
+            {
+                "id": "default", "name": "默认 Agent 模型", "provider_type": "openai_compatible",
+                "base_url": "http://127.0.0.1:1234/v1", "api_key": "", "model": "", "timeout": 60,
+            }
+        ],
+        "brain": {"enabled": False, "default_profile": "default"},
+    }
+    agent = LocalAgent(cfg)
+    assert agent.brain_summary()["status"] == "not_configured"
+
+    cfg["llm_profiles"][0]["model"] = "qwen"
+    assert agent.brain_summary()["status"] == "configured"
+
+    cfg["brain"]["last_test_ok"] = True
+    assert agent.brain_summary()["status"] == "ready"
+
+
+def test_first_local_model():
+    snap = {
+        "services": [
+            {"type": "llm", "provider_type": "lm_studio", "ok": True,
+             "base_url": "http://127.0.0.1:1234/v1", "models": ["qwen3-32b"]},
+        ]
+    }
+    picked = first_local_model(snap)
+    assert picked == ("http://127.0.0.1:1234/v1", "qwen3-32b", "lm_studio")
+
 if __name__ == "__main__":
     test_profile_roundtrip_and_hides_key()
+    test_profile_roundtrip_preserves_fields()
+    test_first_local_model()
+    test_brain_summary_status()
     asyncio.run(test_connection_success())
     asyncio.run(test_connection_error_categories())
     asyncio.run(test_connection_timeout())

@@ -42,6 +42,8 @@ jobs:
           python test/test_tunnel.py
           python test/test_task_manager.py
           python test/test_routing.py
+          python test/test_agent_hello.py
+          python test/test_health_snapshot.py
       - name: Driver / smoke tests
         run: |
           python test/test_ws_driver.py
