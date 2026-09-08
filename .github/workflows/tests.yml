@@ -31,6 +31,8 @@ jobs:
           python test/test_reply_images.py
           python test/test_gen_vs_fetch.py
           python test/test_cache_subfolder.py
+          python test/test_brain.py
+          python test/test_local_agent_offline.py
           python test/test_capability_registry.py
           python test/test_discovery.py
           python test/test_auth.py

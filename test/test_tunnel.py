@@ -44,6 +44,14 @@ async def test_hello_v2():
     # 仅 handle_text 时 ws 可能为 None（真实连接时由 handle_ws 设置 ws），不检查 connected
 
 
+async def test_unsupported_protocol_message():
+    t = TunnelServer({"auth_token": "t"})
+    await t.handle_text(json.dumps({"type": "hello", "v": 3, "data": {"hostname": "pc"}}))
+    assert t.current_agent is not None
+    assert "Unsupported protocol version 3" in t.current_agent.protocol_error
+    assert "Supported protocol versions: 1-2" in t.current_agent.protocol_error
+
+
 async def test_request_response():
     t = TunnelServer({"auth_token": "t", "request_timeout": 5})
     ws = FakeWS()
@@ -82,6 +90,7 @@ def test_auth_and_rate_limit():
 
 if __name__ == "__main__":
     asyncio.run(test_hello_v2())
+    asyncio.run(test_unsupported_protocol_message())
     asyncio.run(test_request_response())
     asyncio.run(test_request_stream_chunk())
     test_auth_and_rate_limit()

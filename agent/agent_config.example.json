@@ -22,5 +22,20 @@
     "timeout": 60,
     "allowed_patterns": []
   },
-  "config_version": 2
+  "config_version": 2,
+  "llm_profiles": [
+    {
+      "id": "default",
+      "name": "默认 Agent 模型",
+      "provider_type": "openai_compatible",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "api_key": "",
+      "model": "",
+      "timeout": 60
+    }
+  ],
+  "brain": {
+    "enabled": false,
+    "default_profile": "default"
+  }
 }

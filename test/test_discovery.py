@@ -59,9 +59,10 @@ async def main():
     comfyui = next(s for s in result.services if s.get("type") == "comfyui")
     assert comfyui["ok"] is True and comfyui["base_url"] == "http://127.0.0.1:8188"
     assert any(s.get("ok") and "llama" in (s.get("models") or []) for s in result.services)
-    assert "image.generate" in result.capabilities
+    assert "image.generate" not in result.capabilities, "服务在线不等于能力可用"
     assert "llm.chat" in result.capabilities
     assert "media.transcode" in result.capabilities
+    assert any("ComfyUI 在线" in i.get("message", "") for i in result.issues)
     print("DISCOVERY PASS")
 
 

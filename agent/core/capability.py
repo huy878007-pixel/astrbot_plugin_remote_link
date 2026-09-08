@@ -28,6 +28,7 @@ class Capability:
     provider: str
     status: str = "unknown"  # ready / degraded / unavailable
     metadata: dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
     last_healthcheck: float = 0.0
 
     def to_dict(self) -> dict:
@@ -36,8 +37,45 @@ class Capability:
             "provider": self.provider,
             "status": self.status,
             "metadata": self.metadata,
+            "evidence": self.evidence,
             "last_healthcheck": self.last_healthcheck,
         }
+
+
+
+def capabilities_from_workflows(workflows: list[dict]) -> list[Capability]:
+    """根据工作流证据确定性推导 ComfyUI 能力。
+
+    规则：
+    - outputs 含 image + 无图片输入 → image.generate
+    - outputs 含 image + 有图片输入 → image.edit
+    - outputs 含 video + 无图片输入 → video.generate
+    - outputs 含 video + 有图片输入 → video.image_to_video
+    - outputs 含 audio → audio.generate
+    """
+    caps: list[Capability] = []
+    for wf in workflows or []:
+        outputs = set(wf.get("outputs") or [])
+        injects = wf.get("injects") or {}
+        nodes = wf.get("nodes") or []
+        has_image_input = int(injects.get("images", 0) or 0) > 0
+        has_video_output = "video" in outputs or any(
+            "SaveVideo" in str(n) or "VHS" in str(n) for n in nodes
+        )
+        evidence = {"type": "workflow", "workflow": wf.get("name") or wf.get("relpath") or ""}
+        if "image" in outputs:
+            caps.append(Capability(
+                id="image.edit" if has_image_input else "image.generate",
+                provider="comfyui", status="ready", evidence=evidence,
+            ))
+        if has_video_output:
+            caps.append(Capability(
+                id="video.image_to_video" if has_image_input else "video.generate",
+                provider="comfyui", status="ready", evidence=evidence,
+            ))
+        if "audio" in outputs:
+            caps.append(Capability(id="audio.generate", provider="comfyui", status="ready", evidence=evidence))
+    return caps
 
 
 class CapabilityRegistry:
@@ -52,7 +90,12 @@ class CapabilityRegistry:
         if capability.id not in CAPABILITY_IDS:
             # 未来扩展允许自定义能力，这里只做记录不硬拒绝
             pass
-        self._capabilities.setdefault(capability.id, []).append(capability)
+        items = self._capabilities.setdefault(capability.id, [])
+        for i, existing in enumerate(items):
+            if existing.provider == capability.provider:
+                items[i] = capability
+                return
+        items.append(capability)
 
     def unregister(self, capability_id: str, provider: str | None = None) -> int:
         items = self._capabilities.get(capability_id)

@@ -8,6 +8,7 @@ import asyncio
 import platform
 import shutil
 import socket
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -76,22 +77,60 @@ async def _probe_comfyui(session, base_url: str | None) -> dict[str, Any]:
         candidates.append(base_url.rstrip("/"))
     candidates.append("http://127.0.0.1:8188")
     for url in dict.fromkeys(candidates):
+        source = "configured" if base_url and url == base_url.rstrip("/") else "default_port"
         if await _http_ok(session, url + "/system_stats", timeout=2):
-            return {"ok": True, "type": "comfyui", "base_url": url}
-    return {"ok": False, "type": "comfyui", "base_url": candidates[0] if candidates else ""}
+            return {
+                "ok": True,
+                "type": "comfyui",
+                "provider_type": "comfyui",
+                "base_url": url,
+                "source": source,
+                "workflows": 0,
+            }
+    return {
+        "ok": False,
+        "type": "comfyui",
+        "provider_type": "comfyui",
+        "base_url": candidates[0] if candidates else "",
+        "source": "configured" if base_url else "default_port",
+        "workflows": 0,
+    }
 
 
-async def _probe_openai_compatible(session, base_url: str) -> dict[str, Any]:
+def _infer_llm_provider(url: str) -> str:
+    u = url.lower()
+    if "11434" in u:
+        return "ollama"
+    if "1234" in u:
+        return "lm_studio"
+    return "openai_compatible"
+
+
+async def _probe_openai_compatible(session, base_url: str, source: str = "configured") -> dict[str, Any]:
     url = base_url.rstrip("/") + "/models"
     try:
         async with session.get(url, timeout=ClientTimeout(total=2)) as r:
             if r.status == 200:
                 data = await r.json()
                 models = sorted({str(m.get("id") or m.get("name")) for m in data.get("data") or data.get("models") or []})
-                return {"ok": True, "base_url": base_url.rstrip("/"), "models": models}
+                return {
+                    "ok": True,
+                    "type": "llm",
+                    "provider_type": _infer_llm_provider(base_url),
+                    "base_url": base_url.rstrip("/"),
+                    "source": source,
+                    "models": models,
+                }
     except Exception:  # noqa: BLE001
         pass
-    return {"ok": False, "base_url": base_url.rstrip("/"), "models": []}
+    return {
+        "ok": False,
+        "type": "llm",
+        "provider_type": _infer_llm_provider(base_url),
+        "base_url": base_url.rstrip("/"),
+        "source": source,
+        "models": [],
+    }
 
 
 
@@ -106,7 +145,7 @@ async def _probe_ffmpeg() -> dict[str, Any]:
         )
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
         first = out.decode("utf-8", errors="ignore").splitlines()[0] if out else ""
-        return {"ok": proc.returncode == 0, "path": path, "version": first}
+        return {"ok": proc.returncode == 0, "source": "path", "path": path, "version": first}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "detail": str(e)}
 
@@ -116,6 +155,9 @@ class DiscoveryResult:
     machine: dict[str, Any] = field(default_factory=dict)
     services: list[dict[str, Any]] = field(default_factory=list)
     capabilities: list[str] = field(default_factory=list)
+    issues: list[dict[str, str]] = field(default_factory=list)
+    brain: dict[str, Any] = field(default_factory=dict)
+    scanned_at: float = field(default_factory=time.time)
 
 
 class Discovery:
@@ -143,14 +185,14 @@ class Discovery:
         llm_services = []
         openai_cfg = self.config.get("openai") or {}
         if openai_cfg.get("base_url"):
-            llm_services.append(await _probe_openai_compatible(session, openai_cfg["base_url"]))
+            llm_services.append(await _probe_openai_compatible(session, openai_cfg["base_url"], source="configured"))
         for svc in (self.config.get("openai_services") or [])[:8]:
             base = svc.get("base_url")
             if base and base not in [s.get("base_url") for s in llm_services]:
-                llm_services.append(await _probe_openai_compatible(session, base))
+                llm_services.append(await _probe_openai_compatible(session, base, source="configured"))
         if not llm_services:
             for url in ("http://127.0.0.1:11434/v1", "http://127.0.0.1:1234/v1"):
-                result = await _probe_openai_compatible(session, url)
+                result = await _probe_openai_compatible(session, url, source="default_port")
                 if result.get("ok"):
                     llm_services.append(result)
                     break
@@ -159,13 +201,29 @@ class Discovery:
         ffmpeg = await _probe_ffmpeg()
         services.append(ffmpeg)
 
+        # Service online != Capability available。
+        # ComfyUI 的能力必须由工作流证据决定（LocalAgent 负责）；这里不直接注册生成能力。
         capabilities: list[str] = []
-        if comfyui.get("ok"):
-            capabilities.extend(["image.generate", "image.edit", "video.generate"])
-        if any(s.get("ok") for s in llm_services):
+        if any(s.get("ok") and (s.get("models")) for s in llm_services):
             capabilities.append("llm.chat")
         if ffmpeg.get("ok"):
             capabilities.append("media.transcode")
         capabilities.append("system.inspect")
 
-        return DiscoveryResult(machine=machine, services=services, capabilities=sorted(set(capabilities)))
+        issues: list[dict[str, str]] = []
+        if comfyui.get("ok") and not comfyui.get("workflows"):
+            issues.append({"severity": "warn", "message": "ComfyUI 在线，但尚未确认到工作流文件，具体生成能力待进一步验证。"})
+        if any(s.get("ok") and not s.get("models") for s in llm_services):
+            issues.append({"severity": "warn", "message": "本地 LLM 服务在线，但没有可用模型。"})
+
+        return DiscoveryResult(
+            machine=machine,
+            services=services,
+            capabilities=sorted(set(capabilities)),
+            issues=issues,
+            brain={
+                "configured": bool(self.config.get("brain", {}).get("enabled")),
+                "default_profile": (self.config.get("brain") or {}).get("default_profile", "default"),
+            },
+            scanned_at=time.time(),
+        )

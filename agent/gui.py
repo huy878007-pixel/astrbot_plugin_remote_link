@@ -59,6 +59,14 @@ DEFAULT_CONFIG_DICT = {
     "openai": {"base_url": "http://127.0.0.1:11434/v1", "api_key": "", "timeout": 300},
     # 多 LLM 服务：额外服务列表（GUI 多服务状态总览）
     "openai_services": [],
+    "llm_profiles": [
+        {
+            "id": "default", "name": "默认 Agent 模型",
+            "provider_type": "openai_compatible",
+            "base_url": "", "api_key": "", "model": "", "timeout": 60,
+        }
+    ],
+    "brain": {"enabled": False, "default_profile": "default"},
     "shell": {"enabled": False, "timeout": 60, "allowed_patterns": []},
     # GUI 偏好（存同一配置文件）
     "gui_overview_cards": ["services", "resources", "task", "recent"],
@@ -425,14 +433,14 @@ class YunxinGui:
         nav.pack_propagate(False)
         self._nav_btns = {}
         for key, ico, label in (("overview", "🏠", "总览"), ("config", "⚙️", "配置"), ("history", "📜", "历史"),
-                                ("log", "📋", "日志"), ("settings", "🔧", "设置")):
+                                ("log", "📋", "日志"), ("settings", "🔧", "设置"), ("env", "🧪", "环境/能力")):
             b = tk.Button(nav, text=f"{ico} {label}", font=(FONT, 10), bd=0, relief="flat", anchor="w",
                           padx=14, pady=9, bg="#0e1526", fg="#9aa8cf", activebackground="#1b2450",
                           activeforeground="#fff", command=lambda k=key: self._show_page(k))
             b.pack(fill="x")
             self._nav_btns[key] = b
         self.pages: dict = {}
-        for key in ("overview", "config", "history", "log", "settings"):
+        for key in ("overview", "config", "history", "log", "settings", "env"):
             p = tk.Frame(body, bg="#0a0e1a")
             self.pages[key] = p
         self._build_overview()
@@ -440,6 +448,7 @@ class YunxinGui:
         self._build_history()
         self._build_log()
         self._build_settings()
+        self._build_env()
         self._show_page("overview")
 
     def _show_page(self, key):
@@ -449,6 +458,171 @@ class YunxinGui:
         for k, b in self._nav_btns.items():
             b.configure(bg="#0e1526", fg="#fff" if k == key else "#9aa8cf",
                         activebackground="#1b2450")
+
+    def _build_env(self):
+        """环境 / 能力页面：本机、服务、能力、AI 大脑、问题建议。"""
+        page = self.pages["env"]
+        inner = self._page_scroll(page)
+        bar = tk.Frame(inner, bg="#0a0e1a")
+        bar.pack(fill="x", padx=12, pady=(8, 4))
+        tb.Label(bar, text="🧪 环境 / 能力", font=(FONT, 13), bootstyle="inverse-dark").pack(side="left")
+        tb.Button(bar, text="🔃 重新扫描", bootstyle="info-outline",
+                  command=self._request_env_rescan).pack(side="right")
+
+        # AI 大脑快速配置（独立于 AstrBot）
+        brain = tk.LabelFrame(inner, text=" AI 大脑（OpenAI Compatible） ", bg="#0a0e1a",
+                              fg="#00e5ff", font=(FONT, 10, "bold"), padx=10, pady=6)
+        brain.pack(fill="x", padx=12, pady=(4, 4))
+        self.brain_url_var = tk.StringVar(value="")
+        self.brain_model_var = tk.StringVar(value="")
+        self.brain_key_var = tk.StringVar(value="")
+        tk.Label(brain, text="Base URL", bg="#0a0e1a", fg="#9aa8cf").grid(row=0, column=0, sticky="w", padx=4, pady=3)
+        tk.Entry(brain, textvariable=self.brain_url_var, width=50, bg="#0e1526", fg="#fff",
+                 insertbackground="#fff", relief="flat").grid(row=0, column=1, padx=4, pady=3)
+        tk.Label(brain, text="Model", bg="#0a0e1a", fg="#9aa8cf").grid(row=1, column=0, sticky="w", padx=4, pady=3)
+        tk.Entry(brain, textvariable=self.brain_model_var, width=50, bg="#0e1526", fg="#fff",
+                 insertbackground="#fff", relief="flat").grid(row=1, column=1, padx=4, pady=3)
+        tk.Label(brain, text="API Key", bg="#0a0e1a", fg="#9aa8cf").grid(row=2, column=0, sticky="w", padx=4, pady=3)
+        tk.Entry(brain, textvariable=self.brain_key_var, width=50, show="•", bg="#0e1526", fg="#fff",
+                 insertbackground="#fff", relief="flat").grid(row=2, column=1, padx=4, pady=3)
+        btns = tk.Frame(brain, bg="#0a0e1a")
+        btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        tb.Button(btns, text="💾 保存配置", bootstyle="primary", command=self._save_brain_config).pack(side="left")
+        tb.Button(btns, text="🔌 测试连接", bootstyle="info-outline", command=self._run_brain_test).pack(side="left", padx=(8, 0))
+
+        self.env_text = tk.Text(inner, bg="#0a0e1a", fg="#c9d4f0", font=("Consolas", 10),
+                                relief="flat", height=22, wrap="word")
+        self.env_text.pack(fill="both", expand=True, padx=12, pady=8)
+
+    def _save_brain_config(self):
+        cfg = load_config()
+        from brain.profiles import normalize_brain_config
+        normalize_brain_config(cfg)
+        profiles = cfg["llm_profiles"]
+        if not profiles:
+            profiles.append({})
+        p0 = profiles[0]
+        p0["provider_type"] = "openai_compatible"
+        p0["base_url"] = (self.brain_url_var.get() or "").strip()
+        p0["model"] = (self.brain_model_var.get() or "").strip()
+        p0["api_key"] = (self.brain_key_var.get() or "").strip()
+        p0["timeout"] = 60
+        cfg["brain"]["enabled"] = bool(p0["base_url"])
+        cfg["brain"]["default_profile"] = "default"
+        try:
+            cfg_path = Path(app_dir()) / "agent_config.json"
+            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            if self.agent:
+                self.agent.cfg = cfg
+            self._log_line("AI 大脑配置已保存（不包含日志输出 API Key）")
+            self._toast("已保存", "AI 大脑配置已保存")
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(APP_NAME, f"保存失败：{e}")
+
+    def _run_brain_test(self):
+        from brain.client import BrainClient
+        from brain.profiles import BrainProfile
+        profile = BrainProfile(
+            provider_type="openai_compatible",
+            base_url=(self.brain_url_var.get() or "").strip(),
+            model=(self.brain_model_var.get() or "").strip(),
+            api_key=(self.brain_key_var.get() or "").strip(),
+            timeout=60,
+        )
+        if not profile.base_url:
+            messagebox.showwarning(APP_NAME, "请先填写 Base URL")
+            return
+
+        def worker():
+            try:
+                import asyncio
+                result = asyncio.run(BrainClient(profile).test_connection())
+            except Exception as e:  # noqa: BLE001
+                result = {"ok": False, "category": "unknown", "message": str(e)}
+            self.root.after(0, lambda: self._show_brain_test_result(result))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_brain_test_result(self, result):
+        if result.get("ok"):
+            messagebox.showinfo(APP_NAME, "✓ API 可访问" + chr(92) + "n✓ 模型可用" + chr(92) + "n响应正常")
+        else:
+            messagebox.showerror(APP_NAME, f"连接失败：{result.get('category', 'unknown')} " + chr(92) + "n{result.get('message', '')}")
+
+    def _request_env_rescan(self):
+        if self.agent:
+            self._log_line("请求重新扫描本机环境…")
+            self.agent.request_rescan()
+        else:
+            self._log_line("代理尚未启动，无法扫描")
+
+    def _refresh_env(self):
+        if not hasattr(self, "env_text"):
+            return
+        try:
+            snap = {}
+            if self.agent:
+                snap = self.agent.snapshot().get("environment") or {}
+            if not snap:
+                self.env_text.delete("1.0", "end")
+                self.env_text.insert("end", "正在检查本机环境……\n")
+                return
+            lines = []
+            machine = snap.get("machine") or {}
+            lines.append("【本机】")
+            lines.append(f"设备名: {machine.get('name', '?')}")
+            lines.append(f"系统: {machine.get('os', '?')}")
+            lines.append(f"CPU: {machine.get('cpu_count', '?')} 核 | RAM: {machine.get('ram_total_gb', '?')} GB")
+            gpus = machine.get("gpus") or []
+            if gpus:
+                for g in gpus:
+                    lines.append(f"GPU: {g.get('name', '?')} | VRAM: {g.get('vram_total_gb', '?')} GB")
+            else:
+                lines.append("GPU: unknown / 未检测到 NVIDIA")
+            lines.append(f"磁盘: 总 {machine.get('disk_total_gb', '?')} GB / 空闲 {machine.get('disk_free_gb', '?')} GB")
+            lines.append("")
+            lines.append("【服务】")
+            for svc in snap.get("services") or []:
+                status = "Ready" if svc.get("ok") else "Offline"
+                base = svc.get("base_url", "")
+                extra = ""
+                if svc.get("type") == "comfyui":
+                    extra = f" | workflows: {svc.get('workflows', 0)}"
+                if svc.get("type") == "llm":
+                    extra = f" | models: {len(svc.get('models') or [])}"
+                if svc.get("type") == "ffmpeg":
+                    base = svc.get("path", base)
+                lines.append(f"{svc.get('provider_type') or svc.get('type')} [{status}] {base}{extra}")
+            lines.append("")
+            lines.append("【能力】")
+            caps = snap.get("capabilities") or {}
+            if caps:
+                for cid, items in caps.items():
+                    for item in items:
+                        ev = item.get("evidence") or {}
+                        wf = ev.get("workflow") or item.get("metadata", {}).get("source", "")
+                        lines.append(f"{'✓' if item.get('status') == 'ready' else '?'} {cid} ({item.get('provider')}) {wf}")
+            else:
+                lines.append("（尚未扫描到确定能力）")
+            lines.append("")
+            lines.append("【AI 大脑】")
+            brain = snap.get("brain") or {}
+            prof = brain.get("profile") or {}
+            lines.append(f"状态: {brain.get('status', 'not_configured')} | Provider: {prof.get('provider_type', '')}")
+            lines.append(f"Endpoint: {prof.get('base_url', '')} | Model: {prof.get('model', '')}")
+            lines.append("")
+            lines.append("【问题与建议】")
+            issues = snap.get("issues") or []
+            if issues:
+                for it in issues:
+                    lines.append(f"⚠ {it.get('message', '')}")
+            else:
+                lines.append("✓ 未发现确定性问题")
+            text = "\n".join(lines)
+            self.env_text.delete("1.0", "end")
+            self.env_text.insert("end", text)
+        except Exception as e:  # noqa: BLE001
+            self._log_line(f"环境页刷新失败: {e}")
 
     def _page_scroll(self, parent):
         """给内容页一个可滚动的容器（配置/日志等长内容用），深色风格滚动条，内容铺满宽度。"""
@@ -1056,6 +1230,7 @@ class YunxinGui:
     def _drain_logs(self):
         if self.log_queue:
             self._redraw_log()
+        self._refresh_env()
         self.root.after(400, self._drain_logs)
 
     def _start_agent(self):

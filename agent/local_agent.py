@@ -50,13 +50,17 @@ logger = logging.getLogger("yunxin_agent")
 
 # v0.2.0 Agent Foundation：能力注册表 + 确定性发现（直接脚本运行和包内导入都兼容）
 try:
-    from core.capability import Capability, CapabilityRegistry
+    from core.capability import Capability, CapabilityRegistry, capabilities_from_workflows
     from core.discovery import Discovery
     from core.health import HealthMonitor
+    from brain.profiles import BrainProfile, get_default_profile, load_profiles, normalize_brain_config, save_profiles
+    from brain.client import BrainClient
 except ImportError:  # 包内相对导入（如作为模块被测试引用）
-    from .core.capability import Capability, CapabilityRegistry
+    from .core.capability import Capability, CapabilityRegistry, capabilities_from_workflows
     from .core.discovery import Discovery
     from .core.health import HealthMonitor
+    from .brain.profiles import BrainProfile, get_default_profile, load_profiles, normalize_brain_config, save_profiles
+    from .brain.client import BrainClient
 
 
 def app_dir() -> Path:
@@ -789,6 +793,7 @@ class LocalAgent:
         self._connected_at = 0.0
         self._last_error = ""
         self._last_info: dict = {}  # 最近一次本机/服务状态采集（hello 与 info 服务、30s 周期刷新）
+        self._environment_snapshot: dict | None = None
         self._current_progress: dict | None = None  # 当前执行任务的实时进度（本地看板/GUI 显示）
         self._history: deque = deque(maxlen=100)  # 生成历史（GUI 历史页展示）
         self._events: deque = deque(maxlen=300)  # (时间戳, 事件文本)，供本地看板展示
@@ -802,6 +807,7 @@ class LocalAgent:
         self._dashboard_runner = None
         self._info_task = None
         self._reconnect_flag = asyncio.Event()
+        self._rescan_flag = asyncio.Event()
         self._stop_requested = False  # GUI 请求停止
         self._loop = None
         self._sink_handlers: list = []
@@ -851,6 +857,15 @@ class LocalAgent:
             except RuntimeError:
                 pass
 
+    def request_rescan(self) -> None:
+        """请求重新扫描本机环境（线程安全）。"""
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(self._rescan_flag.set)
+            except RuntimeError:
+                pass
+
     def snapshot(self) -> dict:
         """给 GUI 的线程安全状态快照。"""
         ws = self.ws
@@ -868,6 +883,7 @@ class LocalAgent:
             "connected_at": self._connected_at,
             "started_at": self._started,
             "last_error": self._last_error,
+            "environment": dict(self._environment_snapshot or {}),
             "server_url": str(self.cfg.get("server_url", "")),
             "info": info,
             "progress": prog,
@@ -878,13 +894,22 @@ class LocalAgent:
     # ---------------- 主循环 ----------------
 
     async def _info_loop(self):
-        """每 30 秒刷新一次本机/服务状态，供 GUI 状态区展示。"""
+        """每 30 秒刷新一次本机/服务状态；初始或收到重扫请求时生成 Environment Snapshot。"""
+        needs_scan = True
         while not self._stop_requested:
-            await asyncio.sleep(30)
+            try:
+                await asyncio.wait_for(self._rescan_flag.wait(), timeout=30)
+                self._rescan_flag.clear()
+                needs_scan = True
+            except asyncio.TimeoutError:
+                pass
             if self._stop_requested:
                 break
             try:
                 self._last_info = await self.collect_info()
+                if needs_scan:
+                    self._environment_snapshot = await self.scan_environment()
+                    needs_scan = False
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1030,6 +1055,14 @@ class LocalAgent:
                 raise RuntimeError("本地会话尚未初始化")
             result = await self._discovery.run(self.session)
             return result.__dict__
+        if service == "scan_environment":
+            return await self.scan_environment()
+        if service == "environment_snapshot":
+            return self._environment_snapshot or await self.scan_environment()
+        if service == "brain_test":
+            return await self.brain_test()
+        if service == "brain_summary":
+            return self.brain_summary()
         if service == "workflows":
             return await self.svc_workflows(payload)
         if service == "capabilities":
@@ -1951,21 +1984,163 @@ class LocalAgent:
         info["comfyui"] = await self._check_comfyui()
         info["openai"] = await self._check_openai()
         info["openai_services"] = await self._check_openai_services()
+        info["ffmpeg"] = await self._check_ffmpeg()
 
-        # 把当前探测结果同步到 Capability Registry
-        self._registry = CapabilityRegistry()
-        capability_ids: list[str] = []
-        if info["comfyui"].get("ok"):
-            capability_ids.extend(["image.generate", "image.edit", "video.generate"])
-        if info["openai"].get("ok"):
-            capability_ids.append("llm.chat")
-        for cid in capability_ids:
-            self._registry.register(Capability(
-                id=cid, provider="comfyui" if cid.startswith(("image.", "video.")) else "openai",
-                status="ready", last_healthcheck=time.time(),
-            ))
+        # 把当前探测结果同步到 Capability Registry（服务在线 ≠ 能力可用）
+        await self._rebuild_capabilities(info)
         info["capabilities"] = self._registry.all_capability_ids()
+        info["capability_snapshot"] = self._registry.snapshot()
         return info
+
+    async def _check_ffmpeg(self) -> dict:
+        """检测 FFmpeg 是否在 PATH 中（不要求完整版本解析）。"""
+        path = shutil.which("ffmpeg")
+        if not path:
+            return {"ok": False, "error": "FFmpeg 不在 PATH 中"}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-version",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+            version = out.decode("utf-8", errors="ignore").splitlines()[0] if out else ""
+            return {"ok": proc.returncode == 0, "path": path, "version": version}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
+
+    async def _rebuild_capabilities(self, info: dict) -> None:
+        """根据服务状态 + 工作流证据确定性重建 Capability Registry。
+
+        规则：
+        - system.inspect：始终 ready；
+        - ComfyUI 能力：必须有实际工作流证据（outputs + injects）才标记 ready；
+        - llm.chat：仅当 OpenAI 兼容服务在线且模型列表非空；
+        - media.transcode：FFmpeg 可用。
+        """
+        registry = CapabilityRegistry()
+        registry.register(Capability(id="system.inspect", provider="local", status="ready",
+                                     metadata={"source": "system"}, last_healthcheck=time.time()))
+
+        wf_entries: list[dict] = []
+        try:
+            for wf in self._list_workflows_fs() or []:
+                outputs = list(wf.get("outputs") or [])
+                injects = wf.get("injects") or {}
+                nodes = []
+                if wf.get("format") == "ui":
+                    try:
+                        obj = json.loads(self._read_workflow(wf.get("relpath") or wf.get("name")))
+                        nodes = [n.get("type", "") for n in (obj.get("nodes") or [])]
+                        if not outputs:
+                            if any(t in ("SaveImage", "SaveAnimatedWEBP", "PreviewImage") for t in nodes):
+                                outputs.append("image")
+                            if any("SaveVideo" in t or "VHS" in t for t in nodes):
+                                outputs.append("video")
+                    except Exception:  # noqa: BLE001
+                        continue
+                wf_entries.append({
+                    "name": wf.get("name") or wf.get("relpath") or "",
+                    "relpath": wf.get("relpath") or "",
+                    "outputs": outputs,
+                    "injects": injects,
+                    "nodes": nodes,
+                })
+            for cap in capabilities_from_workflows(wf_entries):
+                cap.last_healthcheck = time.time()
+                registry.register(cap)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[remote_link] 基于工作流重建能力失败: {e}")
+
+        oai = info.get("openai") or {}
+        if oai.get("ok") and (oai.get("models") or []):
+            registry.register(Capability(id="llm.chat", provider="openai_compatible", status="ready",
+                                         metadata={"source": "openai_models"},
+                                         evidence={"type": "models", "count": len(oai.get("models") or [])},
+                                         last_healthcheck=time.time()))
+        ffmpeg = info.get("ffmpeg") or {}
+        if ffmpeg.get("ok"):
+            registry.register(Capability(id="media.transcode", provider="ffmpeg", status="ready",
+                                         metadata={"path": ffmpeg.get("path", "")},
+                                         evidence={"type": "path"}, last_healthcheck=time.time()))
+
+        self._registry = registry
+
+
+    async def scan_environment(self) -> dict:
+        """重新扫描本机环境并生成统一 Local Environment Snapshot。
+
+        即使 AstrBot 完全离线，只要 LocalAgent 已启动（self.session 存在），
+        本方法仍可独立运行。
+        """
+        own_session = False
+        if self.session is None:
+            self.session = aiohttp.ClientSession()
+            own_session = True
+        try:
+            discovery = await self._discovery.run(self.session)
+            info = await self.collect_info()
+            services = []
+            for svc in discovery.services:
+                entry = dict(svc)
+                if entry.get("type") == "comfyui" and entry.get("ok"):
+                    try:
+                        entry["workflows"] = len(self._list_workflows_fs() or [])
+                    except Exception:
+                        entry["workflows"] = 0
+                services.append(entry)
+            issues = list(discovery.issues or [])
+            snapshot = {
+                "machine": {
+                    **discovery.machine,
+                    "agent_version": AGENT_VERSION,
+                    "protocol_version": PROTOCOL_VERSION,
+                },
+                "services": services,
+                "capabilities": self._registry.snapshot(),
+                "issues": issues,
+                "brain": self.brain_summary(),
+                "scanned_at": time.time(),
+            }
+            self._environment_snapshot = snapshot
+            return snapshot
+        finally:
+            if own_session:
+                await self.session.close()
+                self.session = None
+
+    def brain_summary(self) -> dict:
+        """返回 Brain 状态摘要，绝不包含 API Key。"""
+        normalize_brain_config(self.cfg)
+        brain = self.cfg.get("brain") or {}
+        profile = get_default_profile(self.cfg)
+        status = "not_configured"
+        if profile and profile.base_url:
+            status = "enabled" if brain.get("enabled") else "configured"
+        return {
+            "enabled": bool(brain.get("enabled")),
+            "default_profile": brain.get("default_profile", "default"),
+            "profile": {
+                "id": profile.id if profile else "",
+                "name": profile.name if profile else "",
+                "provider_type": profile.provider_type if profile else "",
+                "base_url": profile.base_url if profile else "",
+                "model": profile.model if profile else "",
+                "timeout": profile.timeout if profile else 60,
+            },
+            "status": status,
+        }
+
+    async def brain_test(self, profile: BrainProfile | None = None) -> dict:
+        """用当前默认 Brain Profile 做连接测试。"""
+        target = profile or get_default_profile(self.cfg)
+        if target is None or not target.base_url:
+            return {"ok": False, "category": "not_configured", "message": "AI 大脑尚未配置"}
+        client = BrainClient(target, session=self.session)
+        try:
+            return await client.test_connection()
+        finally:
+            if self.session is None:
+                await client.close()
 
     async def _check_openai_services(self) -> list[dict]:
         """探测配置的多个本地 LLM 服务（GUI 多服务状态总览用）。"""

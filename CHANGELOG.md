@@ -1,5 +1,16 @@
 # 变更日志
 
+## v0.2.0（2026-09-08）— Local Agent Experience & Local Brain Foundation
+
+- 协议错误提示改为真实支持范围：Unsupported protocol version X. Supported protocol versions: 1-2。
+- Capability Registry 幂等：同一 capability_id + provider 重复注册不会产生重复条目；新增 evidence 字段。
+- 统一 Local Environment Snapshot：machine / services / capabilities / issues / brain / scanned_at。
+- Service Discovery 记录来源（configured / default_port / path），并区分 Ollama / LM Studio / OpenAI Compatible。
+- 能力真实性：服务在线不再自动推导 ComfyUI 生成能力；必须由工作流证据（outputs + injects）确认。
+- 新增 Brain Profile / Client：支持 OpenAI Compatible 非流式 chat，连接测试可区分 unauthorized / model_not_found / timeout / network / incompatible。
+- API Key 不进入 Brain 摘要、Snapshot、hello 上报。
+- GUI 新增“环境 / 能力”页面：本机、服务、能力、AI 大脑配置与测试、问题建议、重新扫描。
+
 ## v0.2.0（2026-09-07）— Agent Foundation 重构
 
 > 本版本以架构整理、安全加固和本地 Agent 基础能力为主，不堆叠大量新业务功能。

@@ -221,7 +221,8 @@ class TunnelServer:
                 f"[remote_link] 代理协议版本 {proto} 不受支持（需 {MIN_PROTOCOL_VERSION}-{PROTOCOL_VERSION}）"
             )
             self._agent.protocol_error = (
-                f"Protocol version {proto} is not supported. Server requires protocol >=2."
+                f"Unsupported protocol version {proto}. "
+                f"Supported protocol versions: {MIN_PROTOCOL_VERSION}-{PROTOCOL_VERSION}."
             )
         elif proto == 1:
             logger.info("[remote_link] 检测到 v1 旧协议，按兼容模式继续")
