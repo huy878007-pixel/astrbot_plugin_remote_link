@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>载入动画 · 首界面 · 作品展示 — 浅色/深色 Demo</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --surface: #ffffff;
+    --surface-2: #eef1f8;
+    --text: #1a1f2e;
+    --text-2: #5b6478;
+    --border: #e2e6f0;
+    --primary: #6366f1;
+    --primary-2: #8b5cf6;
+    --accent: #06b6d4;
+    --shadow: 0 20px 60px rgba(30, 41, 59, .12);
+    --ring: rgba(99, 102, 241, .15);
+  }
+  html[data-theme="dark"] {
+    --bg: #0b0e17;
+    --surface: #131827;
+    --surface-2: #1b2234;
+    --text: #eef2ff;
+    --text-2: #94a3b8;
+    --border: #263047;
+    --primary: #818cf8;
+    --primary-2: #c084fc;
+    --accent: #22d3ee;
+    --shadow: 0 20px 60px rgba(0, 0, 0, .45);
+    --ring: rgba(129, 140, 248, .2);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    transition: background .3s ease, color .3s ease;
+  }
+
+  .theme-bar {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 8px 6px 14px;
+    box-shadow: var(--shadow);
+    font-size: 14px;
+    color: var(--text-2);
+  }
+  .toggle {
+    width: 52px;
+    height: 28px;
+    border-radius: 999px;
+    border: none;
+    background: var(--surface-2);
+    cursor: pointer;
+    position: relative;
+    transition: background .25s;
+  }
+  .toggle::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 2px 6px rgba(0,0,0,.25);
+    transition: transform .25s, background .25s;
+  }
+  html[data-theme="dark"] .toggle::after {
+    transform: translateX(24px);
+    background: #fbbf24;
+  }
+  html[data-theme="dark"] .toggle { background: #334155; }
+
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 36px 24px 80px; }
+  .section { margin-bottom: 72px; }
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .section-index {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-2));
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    box-shadow: 0 8px 24px var(--ring);
+  }
+  .section-title { font-size: 26px; font-weight: 700; margin: 0; }
+  .section-desc { color: var(--text-2); margin: 4px 0 0; }
+
+  .demo-stage {
+    position: relative;
+    border-radius: 24px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .loading-stage {
+    min-height: 360px;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(circle at 20% 20%, var(--ring), transparent 35%),
+      radial-gradient(circle at 80% 80%, var(--ring), transparent 35%),
+      var(--surface);
+  }
+  .loader-card {
+    width: min(420px, 86%);
+    text-align: center;
+    padding: 36px 28px;
+  }
+  .loader-logo {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 20px;
+    border-radius: 22px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-2));
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-size: 26px;
+    font-weight: 800;
+    animation: float 2s ease-in-out infinite;
+    box-shadow: 0 18px 40px var(--ring);
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+  .loader-title { font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+  .loader-sub { color: var(--text-2); margin: 0 0 24px; }
+  .bar {
+    height: 8px;
+    border-radius: 99px;
+    background: var(--surface-2);
+    overflow: hidden;
+    margin-bottom: 12px;
+  }
+  .bar span {
+    display: block;
+    height: 100%;
+    width: 36%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--primary), var(--primary-2), var(--accent));
+    animation: loading 1.4s ease-in-out infinite;
+  }
+  @keyframes loading {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(320%); }
+  }
+  .loader-status { color: var(--text-2); font-size: 13px; }
+  .stage-actions {
+    position: absolute;
+    right: 14px;
+    top: 14px;
+  }
+  .ghost-btn {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-2);
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all .2s;
+  }
+  .ghost-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+  .home-stage {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .home-nav {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+  .brand-mark {
+    width: 32px; height: 32px; border-radius: 10px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-2));
+    color: #fff; display: grid; place-items: center; font-size: 15px;
+  }
+  .home-nav a { color: var(--text-2); text-decoration: none; font-size: 14px; }
+  .home-nav a:hover { color: var(--primary); }
+  .nav-cta {
+    margin-left: auto;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    padding: 8px 18px;
+    border-radius: 999px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .home-hero {
+    padding: 64px 32px;
+    text-align: center;
+    background:
+      radial-gradient(circle at 50% 0%, var(--ring), transparent 55%),
+      var(--surface);
+  }
+  .home-hero h1 { font-size: 42px; line-height: 1.2; margin: 0 0 12px; }
+  .gradient-text {
+    background: linear-gradient(90deg, var(--primary), var(--primary-2), var(--accent));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .home-hero p { color: var(--text-2); max-width: 560px; margin: 0 auto 28px; font-size: 16px; }
+  .hero-btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    border: none;
+    border-radius: 999px;
+    padding: 12px 24px;
+    font-size: 15px;
+    cursor: pointer;
+    color: #fff;
+    background: linear-gradient(135deg, var(--primary), var(--primary-2));
+    box-shadow: 0 12px 30px var(--ring);
+  }
+  .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); box-shadow: none; }
+  .feature-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    padding: 0 28px 32px;
+  }
+  .feature-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+  }
+  .feature-icon {
+    width: 38px; height: 38px; border-radius: 12px;
+    background: var(--ring); display: grid; place-items: center; margin-bottom: 10px;
+    font-size: 18px;
+  }
+  .feature-card h3 { font-size: 16px; margin: 0 0 6px; }
+  .feature-card p { font-size: 13px; color: var(--text-2); margin: 0; line-height: 1.5; }
+
+  .gallery-stage {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+    padding: 28px;
+  }
+  .gallery-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; flex-wrap: wrap; }
+  .chip {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-2);
+    padding: 7px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .gallery-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  .work-card {
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    transition: transform .25s, box-shadow .25s;
+  }
+  .work-card:hover { transform: translateY(-6px); box-shadow: 0 24px 50px var(--ring); }
+  .work-thumb {
+    aspect-ratio: 1 / 1;
+    display: grid;
+    place-items: center;
+    font-size: 40px;
+    color: #fff;
+  }
+  .work-thumb.t1 { background: linear-gradient(135deg, #6366f1, #a855f7); }
+  .work-thumb.t2 { background: linear-gradient(135deg, #06b6d4, #3b82f6); }
+  .work-thumb.t3 { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+  .work-thumb.t4 { background: linear-gradient(135deg, #10b981, #14b8a6); }
+  .work-thumb.t5 { background: linear-gradient(135deg, #ec4899, #f43f5e); }
+  .work-thumb.t6 { background: linear-gradient(135deg, #8b5cf6, #6366f1); }
+  .work-info { padding: 12px 14px; }
+  .work-info h4 { margin: 0 0 6px; font-size: 15px; }
+  .work-info p { margin: 0; font-size: 12px; color: var(--text-2); }
+
+  @media (max-width: 900px) {
+    .feature-row { grid-template-columns: 1fr; }
+    .gallery-grid { grid-template-columns: repeat(2, 1fr); }
+    .home-hero h1 { font-size: 32px; }
+  }
+  @media (max-width: 520px) {
+    .gallery-grid { grid-template-columns: 1fr; }
+    .home-nav a { display: none; }
+    .wrap { padding: 24px 12px 60px; }
+  }
+</style>
+</head>
+<body>
+  <div class="theme-bar">
+    <span>🌗 浅色 / 深色</span>
+    <button class="toggle" id="themeToggle" aria-label="切换主题"></button>
+  </div>
+
+  <main class="wrap">
+    <section class="section">
+      <div class="section-head">
+        <div class="section-index">01</div>
+        <div>
+          <h2 class="section-title">载入动画</h2>
+          <p class="section-desc">品牌 Logo、呼吸浮动、进度条与状态提示。</p>
+        </div>
+      </div>
+      <div class="demo-stage loading-stage" id="loadingStage">
+        <div class="loader-card">
+          <div class="loader-logo">云</div>
+          <h3 class="loader-title">正在进入万象世界</h3>
+          <p class="loader-sub">正在加载地图、角色与世界观数据…</p>
+          <div class="bar"><span></span></div>
+          <div class="loader-status">加载中 36%</div>
+        </div>
+        <div class="stage-actions">
+          <button class="ghost-btn" id="replayLoading">↻ 重播</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div class="section-index">02</div>
+        <div>
+          <h2 class="section-title">首界面</h2>
+          <p class="section-desc">导航、品牌 Hero、主 CTA 与核心能力入口。</p>
+        </div>
+      </div>
+      <div class="home-stage">
+        <nav class="home-nav">
+          <div class="brand"><span class="brand-mark">云</span> 万象世界</div>
+          <a href="#!">首页</a>
+          <a href="#!">世界</a>
+          <a href="#!">创作者</a>
+          <a href="#!">关于</a>
+          <button class="nav-cta">开始体验</button>
+        </nav>
+        <div class="home-hero">
+          <h1>创造属于你的<span class="gradient-text">万象世界</span></h1>
+          <p>人负责想象，创作标准表达世界；Core 负责执行规则，让每个世界真正可玩。</p>
+          <div class="hero-btns">
+            <button class="btn">立即创建</button>
+            <button class="btn btn-outline">浏览作品</button>
+          </div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-card">
+            <div class="feature-icon">🗺️</div>
+            <h3>世界地图</h3>
+            <p>省份、势力、资源分布一目了然。</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">⚙️</div>
+            <h3>规则引擎</h3>
+            <p>经济、科技、政治、外交、军事统一结算。</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🧩</div>
+            <h3>内容包</h3>
+            <p>默认世界与创作者内容自由组合。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div class="section-index">03</div>
+        <div>
+          <h2 class="section-title">作品展示</h2>
+          <p class="section-desc">画廊卡片、筛选标签与悬停反馈。</p>
+        </div>
+      </div>
+      <div class="gallery-stage">
+        <div class="gallery-toolbar">
+          <button class="chip active" data-filter="all">全部</button>
+          <button class="chip" data-filter="fantasy">幻想</button>
+          <button class="chip" data-filter="sci-fi">科幻</button>
+          <button class="chip" data-filter="modern">现代</button>
+        </div>
+        <div class="gallery-grid" id="galleryGrid">
+          <div class="work-card" data-cat="fantasy">
+            <div class="work-thumb t1">🏰</div>
+            <div class="work-info"><h4>暮色王国</h4><p>幻想 · 12 省份 · 4 势力</p></div>
+          </div>
+          <div class="work-card" data-cat="sci-fi">
+            <div class="work-thumb t2">🚀</div>
+            <div class="work-info"><h4>轨道纪元</h4><p>科幻 · 8 省份 · 3 势力</p></div>
+          </div>
+          <div class="work-card" data-cat="modern">
+            <div class="work-thumb t3">🏙️</div>
+            <div class="work-info"><h4>霓虹都会</h4><p>现代 · 16 省份 · 5 势力</p></div>
+          </div>
+          <div class="work-card" data-cat="fantasy">
+            <div class="work-thumb t4">🌿</div>
+            <div class="work-info"><h4>翡翠林地</h4><p>幻想 · 6 省份 · 2 势力</p></div>
+          </div>
+          <div class="work-card" data-cat="sci-fi">
+            <div class="work-thumb t5">🧬</div>
+            <div class="work-info"><h4>深空回响</h4><p>科幻 · 10 省份 · 4 势力</p></div>
+          </div>
+          <div class="work-card" data-cat="modern">
+            <div class="work-thumb t6">🎧</div>
+            <div class="work-info"><h4>城市节拍</h4><p>现代 · 9 省份 · 3 势力</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script>
+  const root = document.documentElement;
+  const toggle = document.getElementById('themeToggle');
+  const saved = localStorage.getItem('theme') || 'light';
+  root.dataset.theme = saved;
+
+  toggle.addEventListener('click', () => {
+    const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+    root.dataset.theme = next;
+    localStorage.setItem('theme', next);
+  });
+
+  const stage = document.getElementById('loadingStage');
+  document.getElementById('replayLoading').addEventListener('click', () => {
+    stage.classList.remove('replay');
+    void stage.offsetWidth;
+    stage.classList.add('replay');
+    const status = stage.querySelector('.loader-status');
+    let p = 0;
+    status.textContent = '正在重新加载…';
+    const timer = setInterval(() => {
+      p = Math.min(100, p + 13);
+      status.textContent = '加载中 ' + p + '%';
+      if (p >= 100) {
+        clearInterval(timer);
+        status.textContent = '加载完成';
+      }
+    }, 120);
+  });
+
+  const chips = document.querySelectorAll('.chip');
+  const cards = document.querySelectorAll('.work-card');
+  chips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      chips.forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      const f = chip.dataset.filter;
+      cards.forEach(card => {
+        card.style.display = (f === 'all' || card.dataset.cat === f) ? '' : 'none';
+      });
+    });
+  });
+</script>
+</body>
+</html>
